@@ -82,9 +82,17 @@ func VerifyV4Signature(root RootUserConfig, iam auth.IAMService, region string, 
 			return s3err.MalformedAuth.IncorrectRegion(region, authData.Region)
 		}
 
-		utils.ContextKeyIsRoot.Set(ctx, authData.Access == root.Access)
+		baseAccess, exaAccess, err := utils.ParseExaAccess(authData.Access)
+		if err != nil {
+			return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
+		}
+		if exaAccess != nil {
+			utils.ContextKeyExaAccess.Set(ctx, exaAccess)
+		}
 
-		account, err := acct.getAccount(authData.Access)
+		utils.ContextKeyIsRoot.Set(ctx, baseAccess == root.Access)
+
+		account, err := acct.getAccount(baseAccess)
 		if err == auth.ErrNoSuchUser {
 			return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
 		}

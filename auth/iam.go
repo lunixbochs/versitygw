@@ -45,12 +45,13 @@ func (r Role) IsValid() bool {
 
 // Account is a gateway IAM account
 type Account struct {
-	Access    string `json:"access"`
-	Secret    string `json:"secret"`
-	Role      Role   `json:"role"`
-	UserID    int    `json:"userID"`
-	GroupID   int    `json:"groupID"`
-	ProjectID int    `json:"projectID"`
+	Access    string `json:"access" xml:"Access"`
+	Secret    string `json:"secret" xml:"Secret"`
+	PublicKey string `json:"publicKey,omitempty" xml:"PublicKey,omitempty"`
+	Role      Role   `json:"role" xml:"Role"`
+	UserID    int    `json:"userID" xml:"UserID"`
+	GroupID   int    `json:"groupID" xml:"GroupID"`
+	ProjectID int    `json:"projectID" xml:"ProjectID"`
 }
 
 type ListUserAccountsResult struct {
@@ -59,11 +60,12 @@ type ListUserAccountsResult struct {
 
 // Mutable props, which could be changed when updating an IAM account
 type MutableProps struct {
-	Secret    *string `json:"secret"`
-	Role      Role    `json:"role"`
-	UserID    *int    `json:"userID"`
-	GroupID   *int    `json:"groupID"`
-	ProjectID *int    `json:"projectID"`
+	Secret    *string `json:"secret" xml:"Secret"`
+	PublicKey *string `json:"publicKey,omitempty" xml:"PublicKey,omitempty"`
+	Role      Role    `json:"role" xml:"Role"`
+	UserID    *int    `json:"userID" xml:"UserID"`
+	GroupID   *int    `json:"groupID" xml:"GroupID"`
+	ProjectID *int    `json:"projectID" xml:"ProjectID"`
 }
 
 func (m MutableProps) Validate() error {
@@ -77,6 +79,9 @@ func (m MutableProps) Validate() error {
 func updateAcc(acc *Account, props MutableProps) {
 	if props.Secret != nil {
 		acc.Secret = *props.Secret
+	}
+	if props.PublicKey != nil {
+		acc.PublicKey = *props.PublicKey
 	}
 	if props.GroupID != nil {
 		acc.GroupID = *props.GroupID

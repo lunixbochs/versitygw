@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.2
 	github.com/aws/smithy-go v1.24.2
 	github.com/davecgh/go-spew v1.1.1
+	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/gofiber/fiber/v2 v2.52.12
 	github.com/google/go-cmp v0.7.0
@@ -78,6 +79,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect

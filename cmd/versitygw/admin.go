@@ -91,6 +91,11 @@ func adminCommand() *cli.Command {
 						Usage:   "projectID for the new user",
 						Aliases: []string{"pi"},
 					},
+					&cli.StringFlag{
+						Name:    "public-key",
+						Usage:   "public key for the new user",
+						Aliases: []string{"pk"},
+					},
 				},
 			},
 			{
@@ -128,6 +133,11 @@ func adminCommand() *cli.Command {
 						Name:    "project-id",
 						Usage:   "projectID for the new user",
 						Aliases: []string{"pi"},
+					},
+					&cli.StringFlag{
+						Name:    "public-key",
+						Usage:   "public key for the user",
+						Aliases: []string{"pk"},
 					},
 				},
 			},
@@ -317,6 +327,7 @@ func createUser(ctx *cli.Context) error {
 	}
 	access, secret, role := ctx.String("access"), ctx.String("secret"), ctx.String("role")
 	userID, groupID, projectID := ctx.Int("user-id"), ctx.Int("group-id"), ctx.Int("project-id")
+	publicKey := ctx.String("public-key")
 	if access == "" || secret == "" {
 		return fmt.Errorf("invalid input parameters for the new user access/secret keys")
 	}
@@ -327,6 +338,7 @@ func createUser(ctx *cli.Context) error {
 	acc := auth.Account{
 		Access:    access,
 		Secret:    secret,
+		PublicKey: publicKey,
 		Role:      auth.Role(role),
 		UserID:    userID,
 		GroupID:   groupID,
@@ -454,6 +466,10 @@ func updateUser(ctx *cli.Context) error {
 	}
 	if ctx.IsSet("project-id") {
 		props.ProjectID = &projectID
+	}
+	if ctx.IsSet("public-key") {
+		pubkey := ctx.String("public-key")
+		props.PublicKey = &pubkey
 	}
 
 	propsxml, err := xml.Marshal(props)
