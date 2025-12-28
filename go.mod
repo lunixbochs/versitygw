@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.94.0
 	github.com/aws/smithy-go v1.24.0
 	github.com/davecgh/go-spew v1.1.1
+	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/google/go-cmp v0.7.0
@@ -61,6 +62,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/text v0.32.0 // indirect

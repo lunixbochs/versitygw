@@ -831,6 +831,7 @@ func TestPosix(ts *TestState) {
 	ts.Run(CopyObject_overwrite_same_dir_object)
 	ts.Run(CopyObject_overwrite_same_file_object)
 	ts.Run(DeleteObject_directory_not_empty)
+	TestExa(ts)
 	// posix specific versioning tests
 	if !ts.conf.versioningEnabled {
 		TestVersioningDisabled(ts)
@@ -953,6 +954,12 @@ func TestAccessControl(ts *TestState) {
 	ts.Run(AccessControl_root_PutBucketAcl)
 	ts.Run(AccessControl_user_PutBucketAcl_with_policy_access)
 	ts.Run(AccessControl_copy_object_with_starting_slash_for_user)
+}
+
+func TestExa(ts *TestState) {
+	ts.Run(ExaKeys_Put_owner_only)
+	ts.Run(ExaKeys_Get_read_permission)
+	ts.Run(ExaPubkeys_owner_only)
 }
 
 func TestPublicBuckets(ts *TestState) {
@@ -1652,6 +1659,9 @@ func GetIntTests() IntTests {
 		"AccessControl_root_PutBucketAcl":                                          AccessControl_root_PutBucketAcl,
 		"AccessControl_user_PutBucketAcl_with_policy_access":                       AccessControl_user_PutBucketAcl_with_policy_access,
 		"AccessControl_copy_object_with_starting_slash_for_user":                   AccessControl_copy_object_with_starting_slash_for_user,
+		"ExaKeys_Put_owner_only":                                                   ExaKeys_Put_owner_only,
+		"ExaKeys_Get_read_permission":                                              ExaKeys_Get_read_permission,
+		"ExaPubkeys_owner_only":                                                    ExaPubkeys_owner_only,
 		"PublicBucket_default_private_bucket":                                      PublicBucket_default_private_bucket,
 		"PublicBucket_public_bucket_policy":                                        PublicBucket_public_bucket_policy,
 		"PublicBucket_public_object_policy":                                        PublicBucket_public_object_policy,

@@ -208,6 +208,18 @@ func (sa *S3ApiRouter) Init(app *fiber.App, be backend.Backend, iam auth.IAMServ
 			middlewares.ParseAcl(be),
 		))
 	bucketRouter.Put("",
+		middlewares.MatchQueryArgs("exa-keys"),
+		controllers.ProcessHandlers(
+			ctrl.PutBucketExaKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(root, iam, region, false),
+			middlewares.VerifyV4Signature(root, iam, region, false, true),
+			middlewares.ApplyBucketCORS(be),
+			middlewares.ParseAcl(be),
+		))
+	bucketRouter.Put("",
 		middlewares.MatchQueryArgs("analytics"),
 		controllers.ProcessHandlers(
 			ctrl.HandleErrorRoute(s3err.GetAPIError(s3err.ErrNotImplemented)),
@@ -712,6 +724,18 @@ func (sa *S3ApiRouter) Init(app *fiber.App, be backend.Backend, iam auth.IAMServ
 			middlewares.ParseAcl(be),
 		))
 	bucketRouter.Get("",
+		middlewares.MatchQueryArgs("exa-keys"),
+		controllers.ProcessHandlers(
+			ctrl.GetBucketExaKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(root, iam, region, false),
+			middlewares.VerifyV4Signature(root, iam, region, false, true),
+			middlewares.ApplyBucketCORS(be),
+			middlewares.ParseAcl(be),
+		))
+	bucketRouter.Get("",
 		middlewares.MatchQueryArgs("uploads"),
 		controllers.ProcessHandlers(
 			ctrl.ListMultipartUploads,
@@ -1016,6 +1040,18 @@ func (sa *S3ApiRouter) Init(app *fiber.App, be backend.Backend, iam auth.IAMServ
 			middlewares.VerifyPresignedV4Signature(root, iam, region, false),
 			middlewares.VerifyV4Signature(root, iam, region, false, true),
 			middlewares.VerifyChecksums(false, true, true),
+			middlewares.ApplyBucketCORS(be),
+			middlewares.ParseAcl(be),
+		))
+	bucketRouter.Post("",
+		middlewares.MatchQueryArgs("exa-pubkeys"),
+		controllers.ProcessHandlers(
+			ctrl.PostBucketExaPubKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(root, iam, region, false),
+			middlewares.VerifyV4Signature(root, iam, region, false, true),
 			middlewares.ApplyBucketCORS(be),
 			middlewares.ParseAcl(be),
 		))

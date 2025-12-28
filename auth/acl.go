@@ -414,6 +414,11 @@ func splitUnique(s, divider string) []string {
 	return result
 }
 
+// VerifyACL checks if the access has the specified permission in the ACL.
+func VerifyACL(acl ACL, access string, permission Permission) error {
+	return verifyACL(acl, access, permission)
+}
+
 func verifyACL(acl ACL, access string, permission Permission) error {
 	grantee := Grantee{
 		Access:     access,
