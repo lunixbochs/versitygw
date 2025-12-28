@@ -196,6 +196,7 @@ func (s *IAMServiceInternal) ListUserAccounts() ([]Account, error) {
 		accs = append(accs, Account{
 			Access:    k,
 			Secret:    conf.AccessAccounts[k].Secret,
+			PublicKey: conf.AccessAccounts[k].PublicKey,
 			Role:      conf.AccessAccounts[k].Role,
 			UserID:    conf.AccessAccounts[k].UserID,
 			GroupID:   conf.AccessAccounts[k].GroupID,

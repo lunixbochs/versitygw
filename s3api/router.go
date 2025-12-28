@@ -287,6 +287,18 @@ func (sa *S3ApiRouter) Init() {
 			middlewares.ParseAcl(sa.be),
 		))
 	bucketRouter.Put("",
+		middlewares.MatchQueryArgs("exa-keys"),
+		controllers.ProcessHandlers(
+			ctrl.PutBucketExaKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
+			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
+			middlewares.ParseAcl(sa.be),
+		))
+	bucketRouter.Put("",
 		middlewares.MatchQueryArgs("analytics"),
 		controllers.ProcessHandlers(
 			ctrl.HandleErrorRoute(s3err.GetAPIError(s3err.ErrNotImplemented)),
@@ -811,6 +823,18 @@ func (sa *S3ApiRouter) Init() {
 			middlewares.ParseAcl(sa.be),
 		))
 	bucketRouter.Get("",
+		middlewares.MatchQueryArgs("exa-keys"),
+		controllers.ProcessHandlers(
+			ctrl.GetBucketExaKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
+			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
+			middlewares.ParseAcl(sa.be),
+		))
+	bucketRouter.Get("",
 		middlewares.MatchQueryArgs("uploads"),
 		controllers.ProcessHandlers(
 			ctrl.ListMultipartUploads,
@@ -1135,6 +1159,18 @@ func (sa *S3ApiRouter) Init() {
 			middlewares.AuthorizePostObject(sa.root, sa.iam, sa.region),
 			middlewares.AuthorizePublicBucketAccess(sa.be, metrics.ActionPostObject, auth.PutObjectAction, auth.PermissionWrite, sa.region, false),
 			applyBucketCORS,
+			middlewares.ParseAcl(sa.be),
+		))
+	bucketRouter.Post("",
+		middlewares.MatchQueryArgs("exa-pubkeys"),
+		controllers.ProcessHandlers(
+			ctrl.PostBucketExaPubKeys,
+			metrics.ActionUndetected,
+			services,
+			middlewares.BucketObjectNameValidator(),
+			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
+			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
 			middlewares.ParseAcl(sa.be),
 		))
 

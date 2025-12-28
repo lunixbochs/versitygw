@@ -414,6 +414,11 @@ func splitUnique(s, divider string) []string {
 	return result
 }
 
+// VerifyACL checks if the access has the specified permission in the ACL.
+func VerifyACL(acl ACL, access string, permission Permission) error {
+	return verifyACL(acl, access, permission, false)
+}
+
 func verifyACL(acl ACL, access string, permission Permission, disableACL bool) error {
 	if disableACL {
 		// only the bucket owner should have access to the bucket
@@ -424,7 +429,6 @@ func verifyACL(acl ACL, access string, permission Permission, disableACL bool) e
 
 		return nil
 	}
-
 	grantee := Grantee{
 		Access:     access,
 		Permission: permission,

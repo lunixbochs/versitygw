@@ -15,6 +15,7 @@ require (
 	github.com/aws/smithy-go v1.27.3
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/davecgh/go-spew v1.1.1
+	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/gofiber/fiber/v3 v3.4.0
 	github.com/google/go-cmp v0.7.0
@@ -81,6 +82,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
