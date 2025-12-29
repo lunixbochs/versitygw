@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/versity/versitygw/internal/exa"
 )
 
 const (
@@ -28,16 +29,9 @@ const (
 	exaAccessVersion = 1
 )
 
-// ExaAccess is the decoded exa1 access payload.
-type ExaAccess struct {
-	Version uint64 `cbor:"v"`
-	Access  string `cbor:"a"`
-	Secret  []byte `cbor:"s,omitempty"`
-}
-
 // ParseExaAccess returns the base access key and decoded exa payload, if present.
 // Non-exa access keys return the input access as-is with nil payload.
-func ParseExaAccess(access string) (string, *ExaAccess, error) {
+func ParseExaAccess(access string) (string, *exa.ExaAccess, error) {
 	if !looksLikeExaAccess(access) {
 		return access, nil, nil
 	}
@@ -50,18 +44,18 @@ func ParseExaAccess(access string) (string, *ExaAccess, error) {
 		return "", nil, fmt.Errorf("unexpected hrp: %s", hrp)
 	}
 
-	var exa ExaAccess
-	if err := cbor.Unmarshal(data, &exa); err != nil {
+	var exaAccess exa.ExaAccess
+	if err := cbor.Unmarshal(data, &exaAccess); err != nil {
 		return "", nil, err
 	}
-	if exa.Version != exaAccessVersion {
-		return "", nil, fmt.Errorf("unsupported exa access version: %d", exa.Version)
+	if exaAccess.Version != exaAccessVersion {
+		return "", nil, fmt.Errorf("unsupported exa access version: %d", exaAccess.Version)
 	}
-	if exa.Access == "" {
+	if exaAccess.Access == "" {
 		return "", nil, errors.New("missing exa access")
 	}
 
-	return exa.Access, &exa, nil
+	return exaAccess.Access, &exaAccess, nil
 }
 
 func looksLikeExaAccess(access string) bool {

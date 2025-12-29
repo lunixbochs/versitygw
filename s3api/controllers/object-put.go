@@ -16,6 +16,7 @@ package controllers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/debuglogger"
+	"github.com/versity/versitygw/internal/exa"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3event"
@@ -686,6 +688,7 @@ func (c S3ApiController) PutObject(ctx fiber.Ctx) (*Response, error) {
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
 	parsedAcl := utils.ContextKeyParsedAcl.Get(ctx).(auth.ACL)
 	IsBucketPublic := utils.ContextKeyPublicBucket.IsSet(ctx)
+	exaAccess, _ := utils.ContextKeyExaAccess.Get(ctx).(*exa.ExaAccess)
 
 	// Content Length
 	contentLengthStr := ctx.Get("Content-Length")
@@ -708,6 +711,45 @@ func (c S3ApiController) PutObject(ctx fiber.Ctx) (*Response, error) {
 	}
 	if lockModeHdr != "" || objLockDate != "" {
 		actions = append(actions, auth.PutObjectRetentionAction)
+	}
+
+	var exaNonce []byte
+	var exaKeyVersion *uint64
+	nonceHeader := ctx.Get("x-exa-nonce")
+	kvHeader := ctx.Get("x-exa-key-version")
+	if nonceHeader != "" || kvHeader != "" {
+		if exaAccess == nil {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		if nonceHeader == "" || kvHeader == "" {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		nonce, err := base64.RawURLEncoding.DecodeString(nonceHeader)
+		if err != nil || len(nonce) != exa.NonceSize {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		version, err := strconv.ParseUint(kvHeader, 10, 64)
+		if err != nil || version == 0 {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		exaNonce = nonce
+		exaKeyVersion = &version
 	}
 
 	err := auth.VerifyAccess(ctx.RequestCtx(), c.be,
@@ -828,6 +870,8 @@ func (c S3ApiController) PutObject(ctx fiber.Ctx) (*Response, error) {
 			ChecksumXXHASH128:         utils.GetStringPtr(checksums[types.ChecksumAlgorithmXxhash128]),
 			IfMatch:                   ifMatch,
 			IfNoneMatch:               ifNoneMatch,
+			ExaNonce:                  exaNonce,
+			ExaKeyVersion:             exaKeyVersion,
 		})
 	return &Response{
 		Headers: map[string]*string{

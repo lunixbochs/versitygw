@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/s3api/utils"
@@ -53,7 +53,7 @@ type exaPubKeysResponse struct {
 	Keys map[string]string `json:"keys"`
 }
 
-func (c S3ApiController) GetBucketExaKeys(ctx *fiber.Ctx) (*Response, error) {
+func (c S3ApiController) GetBucketExaKeys(ctx fiber.Ctx) (*Response, error) {
 	bucket := ctx.Params("bucket")
 	acct := utils.ContextKeyAccount.Get(ctx).(auth.Account)
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
@@ -113,7 +113,7 @@ func (c S3ApiController) GetBucketExaKeys(ctx *fiber.Ctx) (*Response, error) {
 	}, nil
 }
 
-func (c S3ApiController) PutBucketExaKeys(ctx *fiber.Ctx) (*Response, error) {
+func (c S3ApiController) PutBucketExaKeys(ctx fiber.Ctx) (*Response, error) {
 	bucket := ctx.Params("bucket")
 	acct := utils.ContextKeyAccount.Get(ctx).(auth.Account)
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
@@ -170,7 +170,7 @@ func (c S3ApiController) PutBucketExaKeys(ctx *fiber.Ctx) (*Response, error) {
 	}, nil
 }
 
-func (c S3ApiController) PostBucketExaPubKeys(ctx *fiber.Ctx) (*Response, error) {
+func (c S3ApiController) PostBucketExaPubKeys(ctx fiber.Ctx) (*Response, error) {
 	acct := utils.ContextKeyAccount.Get(ctx).(auth.Account)
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
 	parsedAcl := utils.ContextKeyParsedAcl.Get(ctx).(auth.ACL)

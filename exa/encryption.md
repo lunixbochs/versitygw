@@ -1,13 +1,11 @@
-# Exa Transparent Encryption API (draft)
+# Exa Transparent Encryption (draft)
 
-This document describes the current exa API surface added to versitygw for
-transparent encryption key distribution and access key encoding. Object
-encryption/decryption is not covered here and will be documented separately
-once the age integration lands.
+This document describes the exa access key format, bucket key APIs, and the
+object encryption behavior implemented by versitygw (posix backend).
 
 ## AccessKeyID container format
 
-The AccessKeyID can be a bech32m-encoded CBOR payload. These keys are
+AccessKeyID values can be a bech32m-encoded CBOR payload. These keys are
 recognizable by the `exa1` prefix (HRP `exa`).
 
 CBOR map fields:
@@ -16,17 +14,27 @@ CBOR map fields:
 - `s` (bytes, optional): mlkem768x25519 private key bytes.
 
 Notes:
-- Encryption-aware clients use the full `exa1...` AccessKeyID for SigV4, but
-  can omit `s` when they only want auth behavior.
-- The server validates the bech32m checksum, decodes CBOR, and rejects unknown
-  versions or missing `a`.
+- The SigV4 `AccessKeyID` is the full `exa1...` string.
+- The server authenticates using the base access key `a` and the IAM secret.
+- Encryption-aware clients can omit `s` to request auth-only behavior.
 
-## Endpoints
+## Wrapped bucket key format
+
+Wrapped bucket keys are CBOR-encoded blobs stored in bucket metadata and
+returned by the `exa-keys` API. The CBOR map fields are:
+- `v` (uint): version. Current value is `1`.
+- `e` (bytes): HPKE encapsulation.
+- `c` (bytes): encrypted bucket key.
+
+Wrapping uses HPKE MLKEM768X25519 with HKDF-SHA256 and ChaCha20-Poly1305,
+with info string `age-encryption.org/mlkem768x25519`. The bucket key is 16
+bytes. Clients base64-encode the wrapped CBOR blob for JSON transport.
+
+## Bucket key distribution API
 
 All endpoints are bucket-level S3 query params (not admin APIs). They require
-SigV4 authentication. Presigned URLs are allowed, but `X-Amz-Security-Token`
-(temporary credentials) is not supported.
-For signed (non-presigned) requests, `X-Amz-Content-Sha256` is required.
+SigV4 authentication. Presigned URLs are allowed. `X-Amz-Security-Token` is
+not supported.
 
 ### GET /{bucket}?exa-keys
 Returns wrapped bucket keys **only for the calling access key**.
@@ -73,22 +81,68 @@ Response:
 {"keys":{"AKIA...BASE":"PUBKEY1","AKIA...BASE2":"PUBKEY2"}}
 ```
 
-## Error behavior
+## Object encryption
 
-All endpoints return standard S3 error responses. Common errors:
-- `AccessDenied`: ACL check failed, read-only, or non-owner for owner-only APIs.
-- `InvalidRequest`: malformed JSON, missing required fields, or missing pubkey.
-- `InvalidBucketName`, `NoSuchBucket`: bucket validation.
-- `NotImplemented`: backend does not implement exa key storage.
-- `InvalidAccessKeyID`: pubkey request for unknown user.
+Object layout on disk:
+- `nonce` (16 bytes) prefix
+- encrypted payload (age stream format, chunk size 64 KiB)
 
-## Metadata layout (POSIX backend)
+Key derivation:
+- File key: HKDF-SHA256(bucketKey, salt=nonce, info="exa-data") -> 16 bytes
+- Stream key: HKDF-SHA256(fileKey, salt=nonce, info="payload") -> 32 bytes
+
+Payload size:
+- `encryptedPayloadSize = plaintextSize + chunks * 16`, where
+  `chunks = ceil(plaintextSize / 65536)` and empty plaintext uses 1 chunk.
+- Total stored size = `16 + encryptedPayloadSize`.
+
+### Upload behavior
+
+If AccessKeyID includes `s` (secret present):
+- The server unwraps the bucket key, generates a random nonce, encrypts
+  the stream on write, and stores `exa.nonce`/`exa.kv` metadata.
+
+If AccessKeyID omits `s` (auth-only):
+- The client encrypts locally and MUST send:
+  - `x-exa-nonce`: base64url (no padding) of the 16-byte nonce
+  - `x-exa-key-version`: decimal bucket key version
+- The object body MUST start with the 16-byte nonce prefix, followed by the
+  encrypted payload.
+
+### Download behavior
+
+If AccessKeyID includes `s`:
+- The server decrypts on the fly and uses plaintext sizes for range requests,
+  `Content-Length`, and listing sizes.
+
+If AccessKeyID omits `s`:
+- The server returns ciphertext with raw sizes (nonce + encrypted payload).
+- Responses include `x-exa-nonce` and `x-exa-key-version` headers.
+
+Directory listings always report plaintext sizes for encrypted objects.
+
+### Headers
+
+- `x-exa-nonce`: base64url (no padding)
+- `x-exa-key-version`: decimal string
+
+## CopyObject and multipart
+
+CopyObject:
+- Cross-bucket copy is rejected if the source object is encrypted.
+- Same-bucket copy preserves ciphertext and exa metadata (no re-encryption).
+
+Multipart:
+- All multipart operations return `NotImplemented` when an exa AccessKeyID is
+  used.
+
+## Metadata layout (posix backend)
 
 Bucket metadata attributes:
 - `exa.kv.current`: ASCII decimal key-version string.
 - `exa.kv.<version>.wrap.<access>`: wrapped bucket key bytes.
 
-Object metadata attributes (reserved for encryption work):
+Object metadata attributes:
 - `exa.nonce`: 16-byte file nonce.
 - `exa.kv`: key-version used to derive the file key.
 

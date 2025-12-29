@@ -294,8 +294,8 @@ func (sa *S3ApiRouter) Init() {
 			services,
 			middlewares.BucketObjectNameValidator(),
 			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
-			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
-			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true, false),
+			applyBucketCORS,
 			middlewares.ParseAcl(sa.be),
 		))
 	bucketRouter.Put("",
@@ -830,8 +830,8 @@ func (sa *S3ApiRouter) Init() {
 			services,
 			middlewares.BucketObjectNameValidator(),
 			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
-			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
-			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true, false),
+			applyBucketCORS,
 			middlewares.ParseAcl(sa.be),
 		))
 	bucketRouter.Get("",
@@ -1169,8 +1169,8 @@ func (sa *S3ApiRouter) Init() {
 			services,
 			middlewares.BucketObjectNameValidator(),
 			middlewares.VerifyPresignedV4Signature(sa.root, sa.iam, sa.region, false),
-			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true),
-			middlewares.ApplyBucketCORS(sa.be, sa.corsAllowOrigin),
+			middlewares.VerifyV4Signature(sa.root, sa.iam, sa.region, false, true, false),
+			applyBucketCORS,
 			middlewares.ParseAcl(sa.be),
 		))
 
