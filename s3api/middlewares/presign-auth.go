@@ -50,24 +50,25 @@ func VerifyPresignedV4Signature(root RootUserConfig, iam auth.IAMService, region
 			return err
 		}
 
-		baseAccess, exaAccess, err := utils.ParseExaAccess(authData.Access)
-		if err != nil {
-			return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
-		}
-		if exaAccess != nil {
-			utils.ContextKeyExaAccess.Set(ctx, exaAccess)
-		}
+	baseAccess, exaAccess, err := utils.ParseExaAccess(authData.Access)
+	if err != nil {
+		return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
+	}
+	if exaAccess != nil {
+		utils.ContextKeyExaAccess.Set(ctx, exaAccess)
+	}
 
-		utils.ContextKeyIsRoot.Set(ctx, baseAccess == root.Access)
+	isRoot := baseAccess == root.Access
+	utils.ContextKeyIsRoot.Set(ctx, isRoot)
 
-		account, err := acct.getAccount(baseAccess)
-		if err == auth.ErrNoSuchUser {
-			return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
-		}
-		if err != nil {
-			return err
-		}
-		utils.ContextKeyAccount.Set(ctx, account)
+	account, err := acct.getAccount(baseAccess)
+	if err == auth.ErrNoSuchUser {
+		return s3err.GetAPIError(s3err.ErrInvalidAccessKeyID)
+	}
+	if err != nil {
+		return err
+	}
+	utils.ContextKeyAccount.Set(ctx, account)
 
 		var contentLength int64
 		contentLengthStr := ctx.Get("Content-Length")
