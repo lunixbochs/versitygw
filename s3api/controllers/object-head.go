@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/versity/versitygw/auth"
+	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/debuglogger"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
@@ -133,34 +134,42 @@ func (c S3ApiController) HeadObject(ctx *fiber.Ctx) (*Response, error) {
 	// Set the metadata headers
 	utils.SetMetaHeaders(ctx, res.Metadata)
 
+	headers := map[string]*string{
+		"Content-Range":                       res.ContentRange,
+		"Content-Disposition":                 res.ContentDisposition,
+		"Content-Encoding":                    res.ContentEncoding,
+		"Content-Language":                    res.ContentLanguage,
+		"Cache-Control":                       res.CacheControl,
+		"Content-Length":                      utils.ConvertPtrToStringPtr(res.ContentLength),
+		"Content-Type":                        res.ContentType,
+		"Expires":                             res.ExpiresString,
+		"ETag":                                res.ETag,
+		"Last-Modified":                       utils.FormatDatePtrToString(res.LastModified, timefmt),
+		"x-amz-restore":                       res.Restore,
+		"accept-ranges":                       res.AcceptRanges,
+		"x-amz-checksum-crc32":                res.ChecksumCRC32,
+		"x-amz-checksum-crc64nvme":            res.ChecksumCRC64NVME,
+		"x-amz-checksum-crc32c":               res.ChecksumCRC32C,
+		"x-amz-checksum-sha1":                 res.ChecksumSHA1,
+		"x-amz-checksum-sha256":               res.ChecksumSHA256,
+		"x-amz-version-id":                    res.VersionId,
+		"x-amz-mp-parts-count":                utils.ConvertPtrToStringPtr(res.PartsCount),
+		"x-amz-object-lock-mode":              utils.ConvertToStringPtr(res.ObjectLockMode),
+		"x-amz-object-lock-legal-hold":        utils.ConvertToStringPtr(res.ObjectLockLegalHoldStatus),
+		"x-amz-storage-class":                 utils.ConvertToStringPtr(res.StorageClass),
+		"x-amz-checksum-type":                 utils.ConvertToStringPtr(res.ChecksumType),
+		"x-amz-object-lock-retain-until-date": utils.FormatDatePtrToString(res.ObjectLockRetainUntilDate, time.RFC3339),
+		"x-amz-tagging-count":                 utils.ConvertPtrToStringPtr(res.TagCount),
+	}
+	if nonce, ok := ctx.Context().Value(backend.ExaContextNonceKey).(string); ok && nonce != "" {
+		headers["x-exa-nonce"] = &nonce
+	}
+	if version, ok := ctx.Context().Value(backend.ExaContextKeyVersionKey).(string); ok && version != "" {
+		headers["x-exa-key-version"] = &version
+	}
+
 	return &Response{
-		Headers: map[string]*string{
-			"Content-Range":                       res.ContentRange,
-			"Content-Disposition":                 res.ContentDisposition,
-			"Content-Encoding":                    res.ContentEncoding,
-			"Content-Language":                    res.ContentLanguage,
-			"Cache-Control":                       res.CacheControl,
-			"Content-Length":                      utils.ConvertPtrToStringPtr(res.ContentLength),
-			"Content-Type":                        res.ContentType,
-			"Expires":                             res.ExpiresString,
-			"ETag":                                res.ETag,
-			"Last-Modified":                       utils.FormatDatePtrToString(res.LastModified, timefmt),
-			"x-amz-restore":                       res.Restore,
-			"accept-ranges":                       res.AcceptRanges,
-			"x-amz-checksum-crc32":                res.ChecksumCRC32,
-			"x-amz-checksum-crc64nvme":            res.ChecksumCRC64NVME,
-			"x-amz-checksum-crc32c":               res.ChecksumCRC32C,
-			"x-amz-checksum-sha1":                 res.ChecksumSHA1,
-			"x-amz-checksum-sha256":               res.ChecksumSHA256,
-			"x-amz-version-id":                    res.VersionId,
-			"x-amz-mp-parts-count":                utils.ConvertPtrToStringPtr(res.PartsCount),
-			"x-amz-object-lock-mode":              utils.ConvertToStringPtr(res.ObjectLockMode),
-			"x-amz-object-lock-legal-hold":        utils.ConvertToStringPtr(res.ObjectLockLegalHoldStatus),
-			"x-amz-storage-class":                 utils.ConvertToStringPtr(res.StorageClass),
-			"x-amz-checksum-type":                 utils.ConvertToStringPtr(res.ChecksumType),
-			"x-amz-object-lock-retain-until-date": utils.FormatDatePtrToString(res.ObjectLockRetainUntilDate, time.RFC3339),
-			"x-amz-tagging-count":                 utils.ConvertPtrToStringPtr(res.TagCount),
-		},
+		Headers: headers,
 		MetaOpts: &MetaOptions{
 			BucketOwner: parsedAcl.Owner,
 		},

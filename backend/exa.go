@@ -16,8 +16,11 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"strconv"
 	"strings"
+
+	"github.com/versity/versitygw/internal/exa"
 )
 
 const (
@@ -26,6 +29,10 @@ const (
 	exaBucketKeyWrapSep = ".wrap."
 	ExaObjectNonceKey   = "exa.nonce"
 	ExaObjectKVKey      = "exa.kv"
+
+	ExaContextAccessKey     = "exa-access"
+	ExaContextNonceKey      = "exa-nonce"
+	ExaContextKeyVersionKey = "exa-key-version"
 )
 
 type ExaKeyStore interface {
@@ -51,4 +58,22 @@ func ParseExaBucketKeyAttr(attr string) (uint64, string, bool) {
 		return 0, "", false
 	}
 	return version, parts[1], true
+}
+
+func ExaAccessFromContext(ctx context.Context) (*exa.ExaAccess, bool) {
+	val := ctx.Value(ExaContextAccessKey)
+	if val == nil {
+		return nil, false
+	}
+	exaAccess, ok := val.(*exa.ExaAccess)
+	return exaAccess, ok
+}
+
+func SetExaResponseInfo(ctx context.Context, nonce []byte, version uint64) {
+	setter, ok := ctx.(interface{ SetUserValue(key any, value any) })
+	if !ok {
+		return
+	}
+	setter.SetUserValue(ExaContextNonceKey, base64.RawURLEncoding.EncodeToString(nonce))
+	setter.SetUserValue(ExaContextKeyVersionKey, strconv.FormatUint(version, 10))
 }
