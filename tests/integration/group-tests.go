@@ -994,6 +994,9 @@ func TestExa(ts *TestState) {
 	ts.Run(ExaKeys_Put_owner_only)
 	ts.Run(ExaKeys_Get_read_permission)
 	ts.Run(ExaPubkeys_owner_only)
+	ts.Run(ExaEncryption_roundtrip)
+	ts.Run(ExaEncryption_copy_cross_bucket_reject)
+	ts.Run(ExaEncryption_multipart_not_implemented)
 }
 
 func TestPublicBuckets(ts *TestState) {
@@ -1761,6 +1764,9 @@ func GetIntTests() IntTests {
 		"ExaKeys_Put_owner_only":                                                   ExaKeys_Put_owner_only,
 		"ExaKeys_Get_read_permission":                                              ExaKeys_Get_read_permission,
 		"ExaPubkeys_owner_only":                                                    ExaPubkeys_owner_only,
+		"ExaEncryption_roundtrip":                                                  ExaEncryption_roundtrip,
+		"ExaEncryption_copy_cross_bucket_reject":                                   ExaEncryption_copy_cross_bucket_reject,
+		"ExaEncryption_multipart_not_implemented":                                  ExaEncryption_multipart_not_implemented,
 		"PublicBucket_default_private_bucket":                                      PublicBucket_default_private_bucket,
 		"PublicBucket_public_bucket_policy":                                        PublicBucket_public_bucket_policy,
 		"PublicBucket_public_object_policy":                                        PublicBucket_public_object_policy,

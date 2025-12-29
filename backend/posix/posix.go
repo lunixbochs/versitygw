@@ -15,6 +15,7 @@
 package posix
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -40,6 +41,8 @@ import (
 	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/backend/meta"
 	"github.com/versity/versitygw/debuglogger"
+	"github.com/versity/versitygw/internal/exa"
+	exastream "github.com/versity/versitygw/internal/exa/stream"
 	"github.com/versity/versitygw/s3api/middlewares"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
@@ -1121,7 +1124,7 @@ func (p *Posix) fileToObjVersions(bucket string) backend.GetVersionsFunc {
 				return nil, fmt.Errorf("get fileinfo: %w", err)
 			}
 
-			size := fi.Size()
+			size := p.exaPlaintextSize(bucket, path, fi.Size())
 
 			isDel, err := p.isObjDeleteMarker(bucket, path)
 			if err != nil {
@@ -1226,7 +1229,7 @@ func (p *Posix) fileToObjVersions(bucket string) backend.GetVersionsFunc {
 				// note: meta.ErrNoSuchKey will return etagBytes = []byte{}
 				// so this will just set etag to "" if its not already set
 				etag := string(etagBytes)
-				size := nf.Size()
+				size := p.exaPlaintextSize(versionPath, nullVersionId, nf.Size())
 				// Retrieve checksum
 				checksum, err := p.retrieveChecksums(nil, versionPath, nullVersionId)
 				if err != nil && !errors.Is(err, meta.ErrNoSuchKey) {
@@ -1316,7 +1319,7 @@ func (p *Posix) fileToObjVersions(bucket string) backend.GetVersionsFunc {
 				}
 			}
 			versionId := f.Name()
-			size := f.Size()
+			size := p.exaPlaintextSize(versionPath, versionId, f.Size())
 
 			if !*pastVersionIdMarker {
 				if versionId == versionIdMarker {
@@ -1412,7 +1415,9 @@ func (p *Posix) CreateMultipartUpload(ctx context.Context, mpu s3response.Create
 		return s3response.InitiateMultipartUploadResult{}, err
 	}
 	defer release()
-
+	if exaAccessFromContext(ctx) != nil {
+		return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 	if mpu.Key == nil {
 		return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
@@ -1616,6 +1621,9 @@ func (p *Posix) CompleteMultipartUpload(ctx context.Context, input *s3.CompleteM
 }
 
 func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.CompleteMultipartUploadInput, customMove func(from *os.File, to *os.File) error) (s3response.CompleteMultipartUploadResult, string, error) {
+	if exaAccessFromContext(ctx) != nil {
+		return s3response.CompleteMultipartUploadResult{}, "", s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 	acct, ok := ctx.Value("account").(auth.Account)
 	if !ok {
 		acct = auth.Account{}
@@ -2236,7 +2244,9 @@ func (p *Posix) AbortMultipartUpload(ctx context.Context, mpu *s3.AbortMultipart
 		return err
 	}
 	defer release()
-
+	if exaAccessFromContext(ctx) != nil {
+		return s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 	if mpu.Key == nil {
 		return s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
@@ -2289,8 +2299,10 @@ func (p *Posix) ListMultipartUploads(ctx context.Context, mpu *s3.ListMultipartU
 		return s3response.ListMultipartUploadsResult{}, err
 	}
 	defer release()
-
 	var lmu s3response.ListMultipartUploadsResult
+	if exaAccessFromContext(ctx) != nil {
+		return lmu, s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 
 	bucket := *mpu.Bucket
 
@@ -2417,6 +2429,9 @@ func (p *Posix) ListParts(ctx context.Context, input *s3.ListPartsInput) (s3resp
 	defer release()
 
 	var lpr s3response.ListPartsResult
+	if exaAccessFromContext(ctx) != nil {
+		return lpr, s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 
 	if input.Key == nil {
 		return lpr, s3err.GetAPIError(s3err.ErrNoSuchKey)
@@ -2576,6 +2591,9 @@ func (p *Posix) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3.
 }
 
 func (p *Posix) UploadPartWithPostFunc(ctx context.Context, input *s3.UploadPartInput, postprocess func(f *os.File) error) (*s3.UploadPartOutput, error) {
+	if exaAccessFromContext(ctx) != nil {
+		return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 	acct, ok := ctx.Value("account").(auth.Account)
 	if !ok {
 		acct = auth.Account{}
@@ -2856,7 +2874,9 @@ func (p *Posix) UploadPartCopy(ctx context.Context, upi *s3.UploadPartCopyInput)
 		return s3response.CopyPartResult{}, err
 	}
 	defer release()
-
+	if exaAccessFromContext(ctx) != nil {
+		return s3response.CopyPartResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
+	}
 	acct, ok := ctx.Value("account").(auth.Account)
 	if !ok {
 		acct = auth.Account{}
@@ -3301,6 +3321,57 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 		}, nil
 	}
 
+	exaAccess := exaAccessFromContext(ctx)
+	var exaNonce []byte
+	var exaKeyVersion uint64
+	var exaStreamKey []byte
+	exaEncrypted := false
+	tmpSize := contentLength
+
+	if exaAccess != nil {
+		if po.ExaNonce != nil || po.ExaKeyVersion != nil {
+			if po.ExaNonce == nil || po.ExaKeyVersion == nil {
+				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+			}
+			if len(po.ExaNonce) != exa.NonceSize || *po.ExaKeyVersion == 0 {
+				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+			}
+			exaNonce = append([]byte(nil), po.ExaNonce...)
+			exaKeyVersion = *po.ExaKeyVersion
+			exaEncrypted = true
+		} else if len(exaAccess.Secret) > 0 {
+			version, wrapped, err := p.exaCurrentWrappedKey(*po.Bucket, exaAccess.Access)
+			if err != nil {
+				return s3response.PutObjectOutput{}, err
+			}
+			bucketKey, err := exa.UnwrapBucketKey(exaAccess.Secret, wrapped)
+			if err != nil {
+				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrAccessDenied)
+			}
+			nonce, err := exaRandomNonce()
+			if err != nil {
+				return s3response.PutObjectOutput{}, err
+			}
+			fileKey, err := exa.DeriveFileKey(bucketKey, nonce)
+			if err != nil {
+				return s3response.PutObjectOutput{}, err
+			}
+			streamKey, err := exa.DeriveStreamKey(fileKey, nonce)
+			if err != nil {
+				return s3response.PutObjectOutput{}, err
+			}
+			exaNonce = nonce
+			exaKeyVersion = version
+			exaStreamKey = streamKey
+			exaEncrypted = true
+			tmpSize = exa.NonceSize + exa.EncryptedPayloadSize(contentLength)
+		} else {
+			return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+	} else if po.ExaNonce != nil || po.ExaKeyVersion != nil {
+		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+
 	vStatus, err := p.getBucketVersioningStatus(ctx, *po.Bucket)
 	if err != nil {
 		return s3response.PutObjectOutput{}, err
@@ -3344,7 +3415,7 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 	}
 
 	f, err := p.openTmpFile(filepath.Join(*po.Bucket, MetaTmpDir),
-		*po.Bucket, *po.Key, contentLength, acct, doFalloc, p.forceNoTmpFile)
+		*po.Bucket, *po.Key, tmpSize, acct, doFalloc, p.forceNoTmpFile)
 	if err != nil {
 		if errors.Is(err, syscall.EDQUOT) {
 			return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrQuotaExceeded)
@@ -3353,7 +3424,7 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 	}
 	defer f.cleanup()
 
-	objsize := f.size
+	objsize := contentLength
 
 	hash := md5.New()
 	rdr := io.TeeReader(po.Body, hash)
@@ -3368,7 +3439,16 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 		rdr = hashRdr
 	}
 
-	_, err = io.Copy(f, rdr)
+	dataReader := rdr
+	if len(exaStreamKey) > 0 {
+		encReader, err := exastream.NewEncryptReader(exaStreamKey, rdr)
+		if err != nil {
+			return s3response.PutObjectOutput{}, fmt.Errorf("initialize encrypt reader: %w", err)
+		}
+		dataReader = io.MultiReader(bytes.NewReader(exaNonce), encReader)
+	}
+
+	_, err = io.Copy(f, dataReader)
 	if err != nil {
 		if errors.Is(err, syscall.EDQUOT) {
 			return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrQuotaExceeded)
@@ -3461,6 +3541,13 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 	})
 	if err != nil {
 		return s3response.PutObjectOutput{}, err
+	}
+
+	if exaEncrypted {
+		err := p.storeExaObjectMeta(f.File(), *po.Bucket, *po.Key, exaNonce, exaKeyVersion)
+		if err != nil {
+			return s3response.PutObjectOutput{}, err
+		}
 	}
 
 	if versionID != "" && versionID != nullVersionId {
@@ -3973,7 +4060,6 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 		return nil, err
 	}
 	defer release()
-
 	if input.Key == nil {
 		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
@@ -4171,7 +4257,31 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 		return nil, fmt.Errorf("stat object: %w", err)
 	}
 
-	objSize := fi.Size()
+	encSize := fi.Size()
+	objSize := encSize
+	exaAccess := exaAccessFromContext(ctx)
+	exaMeta, exaOk, err := p.exaObjectMetadata(bucket, object)
+	if err != nil {
+		return nil, err
+	}
+	decrypt := false
+	if exaOk {
+		if exaAccess != nil && len(exaAccess.Secret) > 0 {
+			decrypt = true
+			if encSize < exa.NonceSize {
+				return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+			}
+			payloadSize := encSize - exa.NonceSize
+			plainSize, err := exa.PlaintextSizeFromPayload(payloadSize)
+			if err != nil {
+				return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+			}
+			objSize = plainSize
+		} else {
+			backend.SetExaResponseInfo(ctx, exaMeta.nonce, exaMeta.version)
+		}
+	}
+
 	startOffset, length, isValid, err := backend.ParseObjectRange(objSize, *input.Range)
 	if err != nil {
 		return nil, err
@@ -4208,7 +4318,32 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 
 	// using an os.File allows zero-copy sendfile via io.Copy(os.File, net.Conn)
 	var body io.ReadCloser = f
-	if startOffset != 0 || length != objSize {
+	if decrypt {
+		wrapped, err := p.exaWrappedKey(bucket, exaAccess.Access, exaMeta.version)
+		if err != nil {
+			return nil, err
+		}
+		bucketKey, err := exa.UnwrapBucketKey(exaAccess.Secret, wrapped)
+		if err != nil {
+			return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+		}
+		fileKey, err := exa.DeriveFileKey(bucketKey, exaMeta.nonce)
+		if err != nil {
+			return nil, err
+		}
+		streamKey, err := exa.DeriveStreamKey(fileKey, exaMeta.nonce)
+		if err != nil {
+			return nil, err
+		}
+		payloadSize := encSize - exa.NonceSize
+		payloadReader := io.NewSectionReader(f, exa.NonceSize, payloadSize)
+		decReaderAt, err := exastream.NewDecryptReaderAt(streamKey, payloadReader, payloadSize)
+		if err != nil {
+			return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+		}
+		rdr := io.NewSectionReader(decReaderAt, startOffset, length)
+		body = &backend.FileSectionReadCloser{R: rdr, F: f}
+	} else if startOffset != 0 || length != objSize {
 		rdr := io.NewSectionReader(f, startOffset, length)
 		body = &backend.FileSectionReadCloser{R: rdr, F: f}
 	}
@@ -4365,7 +4500,28 @@ func (p *Posix) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3.
 		return nil, err
 	}
 
-	size := fi.Size()
+	encSize := fi.Size()
+	size := encSize
+	exaAccess := exaAccessFromContext(ctx)
+	exaMeta, exaOk, err := p.exaObjectMetadata(bucket, object)
+	if err != nil {
+		return nil, err
+	}
+	if exaOk {
+		if exaAccess != nil && len(exaAccess.Secret) > 0 {
+			if encSize < exa.NonceSize {
+				return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+			}
+			payloadSize := encSize - exa.NonceSize
+			plainSize, err := exa.PlaintextSizeFromPayload(payloadSize)
+			if err != nil {
+				return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+			}
+			size = plainSize
+		} else {
+			backend.SetExaResponseInfo(ctx, exaMeta.nonce, exaMeta.version)
+		}
+	}
 	if fi.IsDir() {
 		size = 0
 	}
@@ -4511,6 +4667,7 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 	if err != nil {
 		return s3response.CopyObjectOutput{}, err
 	}
+	srcBucketName := srcBucket
 	if !p.isBucketValid(srcBucket) {
 		return s3response.CopyObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidBucketName)
 	}
@@ -4588,6 +4745,14 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 		return s3response.CopyObjectOutput{}, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
 
+	srcExaMeta, srcExaOk, err := p.exaObjectMetadata(srcBucket, srcObject)
+	if err != nil {
+		return s3response.CopyObjectOutput{}, err
+	}
+	if srcExaOk && srcBucketName != dstBucket {
+		return s3response.CopyObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+	}
+
 	b, err := p.meta.RetrieveAttribute(f, srcBucket, srcObject, etagkey)
 	srcEtag := string(b)
 	if err != nil {
@@ -4606,6 +4771,7 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 
 	mdmap := make(map[string]string)
 	p.loadObjectMetaData(nil, srcBucket, srcObject, &fi, mdmap)
+	exaAccess := exaAccessFromContext(ctx)
 
 	var etag string
 	var version *string
@@ -4732,6 +4898,9 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 			}
 		}
 	} else {
+		if srcExaOk && exaAccess == nil {
+			return s3response.CopyObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
 		contentLength := fi.Size()
 
 		checksums, err := p.retrieveChecksums(f, srcBucket, srcObject)
@@ -4761,6 +4930,11 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 			ObjectLockRetainUntilDate: input.ObjectLockRetainUntilDate,
 			ObjectLockMode:            input.ObjectLockMode,
 			ObjectLockLegalHoldStatus: input.ObjectLockLegalHoldStatus,
+		}
+		if srcExaOk {
+			putObjectInput.ExaNonce = append([]byte(nil), srcExaMeta.nonce...)
+			version := srcExaMeta.version
+			putObjectInput.ExaKeyVersion = &version
 		}
 
 		// load and pass the source object meta properties, if metadata directive is "COPY"
@@ -4984,7 +5158,7 @@ func (p *Posix) FileToObj(bucket string, fetchOwner bool) backend.GetObjFunc {
 			return s3response.Object{}, fmt.Errorf("get fileinfo: %w", err)
 		}
 
-		size := fi.Size()
+		size := p.exaPlaintextSize(bucket, path, fi.Size())
 		mtime := fi.ModTime()
 
 		return s3response.Object{

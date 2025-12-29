@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,12 +35,30 @@ func initEnv(dir string) {
 	iamDir = dir
 	maxConnections = 250000
 	maxRequests = 100000
-	ports = []string{"127.0.0.1:7070"}
+	addr, err := pickFreePort()
+	if err != nil {
+		log.Fatalf("pick free port: %v", err)
+	}
+	ports = []string{addr}
 
 	// client
 	awsID = "user"
 	awsSecret = "pass"
-	endpoint = "http://127.0.0.1:7070"
+	endpoint = "http://" + addr
+}
+
+func pickFreePort() (string, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer listener.Close()
+
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return "", fmt.Errorf("unexpected listener addr %T", listener.Addr())
+	}
+	return fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port), nil
 }
 
 func initPosix(ctx context.Context) {
