@@ -34,6 +34,8 @@ const (
 	WrappedKeyV1     = 1
 	fileKeyInfo      = "exa-data"
 	streamKeyInfo    = "payload"
+	fileKeyInfoPart  = "exa-data-part"
+	streamKeyInfoPart = "payload-part"
 	pqLabel          = "age-encryption.org/mlkem768x25519"
 	wrappedKeyEncTag = "missing wrapped key encapsulation"
 )
@@ -107,12 +109,7 @@ func DeriveFileKey(bucketKey, nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid bucket key size: %d", len(bucketKey))
 	}
 
-	h := hkdf.New(sha256.New, bucketKey, nonce, []byte(fileKeyInfo))
-	fileKey := make([]byte, FileKeySize)
-	if _, err := io.ReadFull(h, fileKey); err != nil {
-		return nil, err
-	}
-	return fileKey, nil
+	return deriveKey(bucketKey, nonce, fileKeyInfo, FileKeySize)
 }
 
 func DeriveStreamKey(fileKey, nonce []byte) ([]byte, error) {
@@ -123,8 +120,34 @@ func DeriveStreamKey(fileKey, nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid file key size: %d", len(fileKey))
 	}
 
-	h := hkdf.New(sha256.New, fileKey, nonce, []byte(streamKeyInfo))
-	key := make([]byte, chacha20poly1305.KeySize)
+	return deriveKey(fileKey, nonce, streamKeyInfo, chacha20poly1305.KeySize)
+}
+
+func DerivePartFileKey(bucketKey, nonce []byte) ([]byte, error) {
+	if len(nonce) != NonceSize {
+		return nil, fmt.Errorf("invalid nonce size: %d", len(nonce))
+	}
+	if len(bucketKey) != BucketKeySize {
+		return nil, fmt.Errorf("invalid bucket key size: %d", len(bucketKey))
+	}
+
+	return deriveKey(bucketKey, nonce, fileKeyInfoPart, FileKeySize)
+}
+
+func DerivePartStreamKey(fileKey, nonce []byte) ([]byte, error) {
+	if len(nonce) != NonceSize {
+		return nil, fmt.Errorf("invalid nonce size: %d", len(nonce))
+	}
+	if len(fileKey) != FileKeySize {
+		return nil, fmt.Errorf("invalid file key size: %d", len(fileKey))
+	}
+
+	return deriveKey(fileKey, nonce, streamKeyInfoPart, chacha20poly1305.KeySize)
+}
+
+func deriveKey(ikm, salt []byte, info string, size int) ([]byte, error) {
+	h := hkdf.New(sha256.New, ikm, salt, []byte(info))
+	key := make([]byte, size)
 	if _, err := io.ReadFull(h, key); err != nil {
 		return nil, err
 	}

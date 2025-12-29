@@ -5,7 +5,7 @@ object encryption behavior implemented by versitygw (posix backend).
 
 ## AccessKeyID container format
 
-AccessKeyID values can be a bech32m-encoded CBOR payload. These keys are
+AccessKeyID values can be a bech32-encoded CBOR payload. These keys are
 recognizable by the `exa1` prefix (HRP `exa`).
 
 CBOR map fields:
@@ -28,7 +28,7 @@ returned by the `exa-keys` API. The CBOR map fields are:
 
 Wrapping uses HPKE MLKEM768X25519 with HKDF-SHA256 and ChaCha20-Poly1305,
 with info string `age-encryption.org/mlkem768x25519`. The bucket key is 16
-bytes. Clients base64-encode the wrapped CBOR blob for JSON transport.
+bytes. JSON transport uses standard base64 encoding for the wrapped bytes.
 
 ## Bucket key distribution API
 
@@ -133,8 +133,17 @@ CopyObject:
 - Same-bucket copy preserves ciphertext and exa metadata (no re-encryption).
 
 Multipart:
-- All multipart operations return `NotImplemented` when an exa AccessKeyID is
-  used.
+- Multipart encryption is supported only with full exa access keys (with `s`).
+- Auth-only exa keys return `NotImplemented` for multipart operations.
+- Each part is encrypted independently with a per-part nonce stored only in
+  metadata (no nonce prefix in the part payload).
+- Part key derivation:
+  - File key: HKDF-SHA256(bucketKey, salt=nonce, info="exa-data-part") -> 16 bytes
+  - Stream key: HKDF-SHA256(fileKey, salt=nonce, info="payload-part") -> 32 bytes
+- CompleteMultipartUpload decrypts each part and re-encrypts the final object
+  with a new nonce and the current bucket key (same behavior as PutObject).
+- UploadPartCopy is not supported for exa-encrypted uploads.
+- Mixed plaintext and encrypted parts are rejected.
 
 ## Metadata layout (posix backend)
 
@@ -145,6 +154,10 @@ Bucket metadata attributes:
 Object metadata attributes:
 - `exa.nonce`: 16-byte file nonce.
 - `exa.kv`: key-version used to derive the file key.
+
+Multipart part metadata attributes:
+- `exa.nonce`: 16-byte part nonce (parts never include a nonce prefix).
+- `exa.kv`: key-version used to derive the part key.
 
 ## IAM public keys
 

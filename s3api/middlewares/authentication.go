@@ -95,7 +95,8 @@ func VerifyV4Signature(root RootUserConfig, iam auth.IAMService, region string, 
 			utils.ContextKeyExaAccess.Set(ctx, exaAccess)
 		}
 
-		utils.ContextKeyIsRoot.Set(ctx, baseAccess == root.Access)
+		isRoot := baseAccess == root.Access
+		utils.ContextKeyIsRoot.Set(ctx, isRoot)
 
 		account, err := acct.getAccount(baseAccess)
 		if err == auth.ErrNoSuchUser {

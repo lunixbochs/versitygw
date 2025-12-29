@@ -18,26 +18,28 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"filippo.io/hpke"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/versity/versitygw/internal/exa"
+	exabech32 "github.com/versity/versitygw/internal/exa/bech32"
 	exastream "github.com/versity/versitygw/internal/exa/stream"
 	"github.com/versity/versitygw/s3err"
 )
 
 const (
 	exaBech32Hrp     = "exa"
-	exaBech32mConst  = 0x2bc830a3
 	exaAccessVersion = 1
 	exaHpkeLabel     = "age-encryption.org/mlkem768x25519"
 )
@@ -207,6 +209,152 @@ func ExaEncryption_roundtrip(s *S3Conf) error {
 	})
 }
 
+func ExaEncryption_canary_put(s *S3Conf) error {
+	testName := "ExaEncryption_canary_put"
+	if s.azureTests {
+		return nil
+	}
+
+	return actionHandler(s, testName, func(_ *s3.Client, bucket string) error {
+		fullAccess, authOnlyAccess, _, _, err := setupExaKeys(s, bucket)
+		if err != nil {
+			return err
+		}
+
+		random := make([]byte, 24)
+		if _, err := rand.Read(random); err != nil {
+			return err
+		}
+		canary := []byte("exa-canary-" + hex.EncodeToString(random))
+		payload := append([]byte("payload:"), canary...)
+
+		obj := "exa-canary"
+		if err := putSignedObject(s, bucket, obj, fullAccess, payload, nil); err != nil {
+			return err
+		}
+
+		fullBody, _, err := getSignedObject(s, bucket, obj, fullAccess, nil)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(fullBody, payload) {
+			return fmt.Errorf("expected plaintext canary, got %q", string(fullBody))
+		}
+
+		authBody, _, err := getSignedObject(s, bucket, obj, authOnlyAccess, nil)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(authBody, canary) {
+			return fmt.Errorf("auth-only read leaked canary")
+		}
+
+		return nil
+	})
+}
+
+func ExaEncryption_canary_multipart(s *S3Conf) error {
+	testName := "ExaEncryption_canary_multipart"
+	if s.azureTests {
+		return nil
+	}
+
+	return actionHandler(s, testName, func(_ *s3.Client, bucket string) error {
+		fullAccess, authOnlyAccess, _, _, err := setupExaKeys(s, bucket)
+		if err != nil {
+			return err
+		}
+
+		exaConf := *s
+		exaConf.awsID = fullAccess
+		exaClient := exaConf.GetClient()
+
+		obj := "exa-canary-mp"
+		mp, err := createMp(exaClient, bucket, obj)
+		if err != nil {
+			return err
+		}
+
+		random := make([]byte, 24)
+		if _, err := rand.Read(random); err != nil {
+			return err
+		}
+		canary := []byte("exa-canary-" + hex.EncodeToString(random))
+
+		const partSize = 5 * 1024 * 1024
+		part1 := make([]byte, partSize)
+		if _, err := rand.Read(part1); err != nil {
+			return err
+		}
+		copy(part1, canary)
+		part2 := make([]byte, partSize)
+		if _, err := rand.Read(part2); err != nil {
+			return err
+		}
+
+		plaintext := make([]byte, 0, len(part1)+len(part2))
+		plaintext = append(plaintext, part1...)
+		plaintext = append(plaintext, part2...)
+
+		partsData := [][]byte{part1, part2}
+		completedParts := make([]types.CompletedPart, 0, len(partsData))
+		for i, data := range partsData {
+			pn := int32(i + 1)
+			ctx, cancel := context.WithTimeout(context.Background(), shortTimeout)
+			out, err := exaClient.UploadPart(ctx, &s3.UploadPartInput{
+				Bucket:     &bucket,
+				Key:        &obj,
+				UploadId:   mp.UploadId,
+				PartNumber: &pn,
+				Body:       bytes.NewReader(data),
+			})
+			cancel()
+			if err != nil {
+				return err
+			}
+			completedParts = append(completedParts, types.CompletedPart{
+				ETag:       out.ETag,
+				PartNumber: &pn,
+			})
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), shortTimeout)
+		_, err = exaClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+			Bucket:   &bucket,
+			Key:      &obj,
+			UploadId: mp.UploadId,
+			MultipartUpload: &types.CompletedMultipartUpload{
+				Parts: completedParts,
+			},
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+
+		fullBody, _, err := getSignedObject(s, bucket, obj, fullAccess, nil)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(fullBody, plaintext) {
+			return fmt.Errorf("expected plaintext multipart canary, got %d bytes", len(fullBody))
+		}
+		if !bytes.Contains(fullBody, canary) {
+			return fmt.Errorf("expected canary in multipart plaintext")
+		}
+
+		authBody, _, err := getSignedObject(s, bucket, obj, authOnlyAccess, nil)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(authBody, canary) {
+			return fmt.Errorf("auth-only read leaked multipart canary")
+		}
+
+		return nil
+	})
+}
+
 func ExaEncryption_copy_cross_bucket_reject(s *S3Conf) error {
 	testName := "ExaEncryption_copy_cross_bucket_reject"
 	if s.azureTests {
@@ -249,35 +397,135 @@ func ExaEncryption_copy_cross_bucket_reject(s *S3Conf) error {
 	})
 }
 
-func ExaEncryption_multipart_not_implemented(s *S3Conf) error {
-	testName := "ExaEncryption_multipart_not_implemented"
+func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
+	testName := "ExaEncryption_multipart_roundtrip"
 	if s.azureTests {
 		return nil
 	}
 
 	return actionHandler(s, testName, func(_ *s3.Client, bucket string) error {
-		kem := hpke.MLKEM768X25519()
-		priv, err := kem.GenerateKey()
+		fullAccess, authOnlyAccess, _, _, err := setupExaKeys(s, bucket)
 		if err != nil {
 			return err
 		}
-		secret, err := priv.Bytes()
-		if err != nil {
-			return err
-		}
-		exaAccess, err := makeExaAccessKey(s.awsID, secret)
-		if err != nil {
+
+		authConf := *s
+		authConf.awsID = authOnlyAccess
+		authClient := authConf.GetClient()
+
+		ctx, cancel := context.WithTimeout(context.Background(), shortTimeout)
+		_, err = createMp(authClient, bucket, "exa-mp-auth-only")
+		cancel()
+		if err := checkApiErr(err, s3err.GetAPIError(s3err.ErrNotImplemented)); err != nil {
 			return err
 		}
 
 		exaConf := *s
-		exaConf.awsID = exaAccess
+		exaConf.awsID = fullAccess
 		exaClient := exaConf.GetClient()
 
-		_, err = createMp(exaClient, bucket, "exa-mp")
-		if err := checkApiErr(err, s3err.GetAPIError(s3err.ErrNotImplemented)); err != nil {
+		obj := "exa-mp"
+		mp, err := createMp(exaClient, bucket, obj)
+		if err != nil {
 			return err
 		}
+
+		totalSize := int64(10 * 1024 * 1024)
+		partCount := int64(2)
+		parts, csum, err := uploadParts(exaClient, totalSize, partCount, bucket, obj, *mp.UploadId)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), shortTimeout)
+		listRes, err := exaClient.ListParts(ctx, &s3.ListPartsInput{
+			Bucket:   &bucket,
+			Key:      &obj,
+			UploadId: mp.UploadId,
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+		if len(listRes.Parts) != int(partCount) {
+			return fmt.Errorf("expected %d parts, got %d", partCount, len(listRes.Parts))
+		}
+		partSize := totalSize / partCount
+		lastSize := totalSize - partSize*(partCount-1)
+		for i, part := range listRes.Parts {
+			if part.Size == nil {
+				return fmt.Errorf("missing size for part %d", i+1)
+			}
+			expectedSize := partSize
+			if int64(i) == partCount-1 {
+				expectedSize = lastSize
+			}
+			if *part.Size != expectedSize {
+				return fmt.Errorf("expected part size %d, got %d", expectedSize, *part.Size)
+			}
+		}
+
+		completeParts := make([]types.CompletedPart, 0, len(parts))
+		for _, part := range parts {
+			completeParts = append(completeParts, types.CompletedPart{
+				ETag:       part.ETag,
+				PartNumber: part.PartNumber,
+			})
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), shortTimeout)
+		_, err = exaClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+			Bucket:   &bucket,
+			Key:      &obj,
+			UploadId: mp.UploadId,
+			MultipartUpload: &types.CompletedMultipartUpload{
+				Parts: completeParts,
+			},
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+
+		fullBody, _, err := getSignedObject(s, bucket, obj, fullAccess, nil)
+		if err != nil {
+			return err
+		}
+		fullSum := sha256.Sum256(fullBody)
+		if hex.EncodeToString(fullSum[:]) != csum {
+			return fmt.Errorf("multipart plaintext checksum mismatch")
+		}
+
+		authBody, authHeaders, err := getSignedObject(s, bucket, obj, authOnlyAccess, nil)
+		if err != nil {
+			return err
+		}
+		nonceHeader := authHeaders.Get("x-exa-nonce")
+		if nonceHeader == "" {
+			return fmt.Errorf("missing x-exa-nonce header")
+		}
+		nonce, err := base64.RawURLEncoding.DecodeString(nonceHeader)
+		if err != nil {
+			return fmt.Errorf("decode x-exa-nonce: %w", err)
+		}
+		if len(nonce) != exa.NonceSize {
+			return fmt.Errorf("unexpected nonce length %d", len(nonce))
+		}
+		if len(authBody) < exa.NonceSize {
+			return fmt.Errorf("ciphertext shorter than nonce prefix")
+		}
+		if !bytes.Equal(authBody[:exa.NonceSize], nonce) {
+			return fmt.Errorf("nonce header does not match payload prefix")
+		}
+
+		expectedPayloadSize := exa.EncryptedPayloadSize(totalSize)
+		expectedTotal := int64(exa.NonceSize) + expectedPayloadSize
+		if int64(len(authBody)) != expectedTotal {
+			return fmt.Errorf("expected ciphertext length %d, got %d", expectedTotal, len(authBody))
+		}
+		if got := authHeaders.Get("Content-Length"); got != strconv.FormatInt(expectedTotal, 10) {
+			return fmt.Errorf("expected ciphertext content-length %d, got %q", expectedTotal, got)
+		}
+
 		return nil
 	})
 }
@@ -386,7 +634,7 @@ func makeExaAccessKey(access string, secret []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return bech32mEncode(exaBech32Hrp, cborBytes)
+	return exabech32.Encode(exaBech32Hrp, cborBytes)
 }
 
 func putSignedObject(s *S3Conf, bucket, key, access string, body []byte, headers map[string]string) error {
@@ -453,99 +701,4 @@ func getSignedObject(s *S3Conf, bucket, key, access string, headers map[string]s
 		return nil, nil, err
 	}
 	return body, resp.Header, nil
-}
-
-func bech32mEncode(hrp string, data []byte) (string, error) {
-	fiveBit, err := bech32ConvertBits(data, 8, 5, true)
-	if err != nil {
-		return "", err
-	}
-	checksum := bech32mCreateChecksum(hrp, fiveBit)
-	combined := append(fiveBit, checksum...)
-
-	var out strings.Builder
-	out.Grow(len(hrp) + 1 + len(combined))
-	out.WriteString(strings.ToLower(hrp))
-	out.WriteByte('1')
-	for _, b := range combined {
-		if int(b) >= len(bech32Charset) {
-			return "", fmt.Errorf("invalid bech32 value %d", b)
-		}
-		out.WriteByte(bech32Charset[b])
-	}
-	return out.String(), nil
-}
-
-func bech32mCreateChecksum(hrp string, data []byte) []byte {
-	values := append(bech32HrpExpand(hrp), data...)
-	polymod := bech32Polymod(values) ^ exaBech32mConst
-	checksum := make([]byte, 6)
-	for i := 0; i < 6; i++ {
-		checksum[i] = byte((polymod >> uint(5*(5-i))) & 31)
-	}
-	return checksum
-}
-
-var bech32Charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-
-func bech32HrpExpand(hrp string) []byte {
-	expanded := make([]byte, 0, len(hrp)*2+1)
-	for i := 0; i < len(hrp); i++ {
-		expanded = append(expanded, hrp[i]>>5)
-	}
-	expanded = append(expanded, 0)
-	for i := 0; i < len(hrp); i++ {
-		expanded = append(expanded, hrp[i]&31)
-	}
-	return expanded
-}
-
-func bech32Polymod(values []byte) uint32 {
-	var chk uint32 = 1
-	for _, v := range values {
-		b := chk >> 25
-		chk = (chk&0x1ffffff)<<5 ^ uint32(v)
-		if (b & 1) != 0 {
-			chk ^= 0x3b6a57b2
-		}
-		if (b & 2) != 0 {
-			chk ^= 0x26508e6d
-		}
-		if (b & 4) != 0 {
-			chk ^= 0x1ea119fa
-		}
-		if (b & 8) != 0 {
-			chk ^= 0x3d4233dd
-		}
-		if (b & 16) != 0 {
-			chk ^= 0x2a1462b3
-		}
-	}
-	return chk
-}
-
-func bech32ConvertBits(data []byte, fromBits, toBits uint, pad bool) ([]byte, error) {
-	var acc uint
-	var bits uint
-	maxv := uint((1 << toBits) - 1)
-	ret := make([]byte, 0, len(data)*int(fromBits)/int(toBits))
-	for _, value := range data {
-		if value>>fromBits != 0 {
-			return nil, fmt.Errorf("bech32m invalid data range")
-		}
-		acc = (acc << fromBits) | uint(value)
-		bits += fromBits
-		for bits >= toBits {
-			bits -= toBits
-			ret = append(ret, byte((acc>>bits)&maxv))
-		}
-	}
-	if pad {
-		if bits > 0 {
-			ret = append(ret, byte((acc<<(toBits-bits))&maxv))
-		}
-	} else if bits >= fromBits || ((acc<<(toBits-bits))&maxv) != 0 {
-		return nil, fmt.Errorf("bech32m invalid padding")
-	}
-	return ret, nil
 }
