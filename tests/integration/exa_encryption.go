@@ -32,9 +32,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/fxamacker/cbor/v2"
+	exabech32 "github.com/lunixbochs/sage/bech32"
+	exastream "github.com/lunixbochs/sage/stream"
 	"github.com/versity/versitygw/internal/exa"
-	exabech32 "github.com/versity/versitygw/internal/exa/bech32"
-	exastream "github.com/versity/versitygw/internal/exa/stream"
 	"github.com/versity/versitygw/s3err"
 )
 

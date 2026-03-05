@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/lunixbochs/sage/bech32"
 	"github.com/versity/versitygw/internal/exa"
-	exabech32 "github.com/versity/versitygw/internal/exa/bech32"
 )
 
 const (
@@ -36,7 +36,7 @@ func ParseExaAccess(access string) (string, *exa.ExaAccess, error) {
 		return access, nil, nil
 	}
 
-	hrp, data, err := exabech32.Decode(access)
+	hrp, data, err := bech32.Decode(access)
 	if err != nil {
 		return "", nil, err
 	}
