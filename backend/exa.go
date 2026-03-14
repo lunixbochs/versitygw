@@ -28,6 +28,8 @@ const (
 	exaBucketKeyWrapSep = ".wrap."
 	ExaObjectNonceKey   = "exa.nonce"
 	ExaObjectKVKey      = "exa.kv"
+	ExaMultipartModeKey = "exa.mpu.mode"
+	ExaMultipartKVKey   = "exa.mpu.kv"
 
 	ExaContextAccessKey     = "exa-access"
 	ExaContextKeyVersionKey = "exa-key-version"

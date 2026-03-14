@@ -1415,9 +1415,6 @@ func (p *Posix) CreateMultipartUpload(ctx context.Context, mpu s3response.Create
 		return s3response.InitiateMultipartUploadResult{}, err
 	}
 	defer release()
-	if exaAccess := exaAccessFromContext(ctx); exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 	if mpu.Key == nil {
 		return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
@@ -1441,6 +1438,11 @@ func (p *Posix) CreateMultipartUpload(ctx context.Context, mpu s3response.Create
 		// directory objects can't be uploaded with multipart uploads
 		// because posix directories can't contain data
 		return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrDirectoryObjectContainsData)
+	}
+
+	exaState, err := exaMultipartStateForRequest(exaAccessFromContext(ctx), mpu.ExaKeyVersion)
+	if err != nil {
+		return s3response.InitiateMultipartUploadResult{}, err
 	}
 
 	// parse object tags
@@ -1567,6 +1569,13 @@ func (p *Posix) CreateMultipartUpload(ctx context.Context, mpu s3response.Create
 		}
 	}
 
+	err = p.storeExaMultipartState(nil, bucket, filepath.Join(objdir, uploadID), exaState)
+	if err != nil {
+		_ = os.RemoveAll(filepath.Join(tmppath, uploadID))
+		_ = os.Remove(tmppath)
+		return s3response.InitiateMultipartUploadResult{}, err
+	}
+
 	return s3response.InitiateMultipartUploadResult{
 		Bucket:   bucket,
 		Key:      object,
@@ -1622,9 +1631,6 @@ func (p *Posix) CompleteMultipartUpload(ctx context.Context, input *s3.CompleteM
 
 func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.CompleteMultipartUploadInput, customMove func(from *os.File, to *os.File) error) (s3response.CompleteMultipartUploadResult, string, error) {
 	exaAccess := exaAccessFromContext(ctx)
-	if exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return s3response.CompleteMultipartUploadResult{}, "", s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 	acct, ok := ctx.Value("account").(auth.Account)
 	if !ok {
 		acct = auth.Account{}
@@ -1679,6 +1685,13 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	}
 
 	objdir := filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum))
+	uploadState, err := p.exaMultipartState(bucket, filepath.Join(objdir, uploadID))
+	if err != nil {
+		return res, "", err
+	}
+	if err := validateExaMultipartAccess(exaAccess, uploadState); err != nil {
+		return res, "", err
+	}
 
 	checksums, err := p.retrieveChecksums(nil, bucket, filepath.Join(objdir, uploadID))
 	if err != nil && !errors.Is(err, meta.ErrNoSuchKey) {
@@ -1708,8 +1721,6 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	last := len(parts) - 1
 	var totalsize int64
 	partInfos := make([]partInfo, 0, len(parts))
-	exaMultipart := false
-	seenPlainPart := false
 
 	// The initialie values is the lower limit of partNumber: 0
 	var partNumber int32
@@ -1740,24 +1751,22 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 		if err != nil {
 			return res, "", err
 		}
-		if exaOk {
-			if exaAccess == nil {
-				return res, "", s3err.GetAPIError(s3err.ErrInvalidRequest)
+		switch uploadState.mode {
+		case exaMultipartModeServer:
+			if !exaOk {
+				return res, "", s3err.GetAPIError(s3err.ErrInvalidPart)
 			}
-			exaMultipart = true
 			plainSize, err = exa.PlaintextSizeFromPayload(encSize)
 			if err != nil {
 				return res, "", s3err.GetAPIError(s3err.ErrInvalidObjectState)
 			}
 			metaInfo = exaMeta
-		} else {
-			seenPlainPart = true
-		}
-		if exaMultipart && seenPlainPart {
-			return res, "", s3err.GetAPIError(s3err.ErrInvalidPart)
-		}
-		if exaAccess != nil && !exaOk {
-			return res, "", s3err.GetAPIError(s3err.ErrInvalidPart)
+		case exaMultipartModeClient, exaMultipartModeNone:
+			if exaOk {
+				return res, "", s3err.GetAPIError(s3err.ErrInvalidPart)
+			}
+		default:
+			return res, "", s3err.GetAPIError(s3err.ErrInvalidObjectState)
 		}
 		partInfos = append(partInfos, partInfo{
 			objPath:   partObjPath,
@@ -1811,7 +1820,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	var finalNonce []byte
 	var finalKeyVersion uint64
 	var finalStreamKey []byte
-	if exaMultipart {
+	if uploadState.mode == exaMultipartModeServer {
 		version, wrapped, err := p.exaCurrentWrappedKey(bucket, exaAccess.Access)
 		if err != nil {
 			return res, "", err
@@ -1836,6 +1845,11 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 		finalKeyVersion = version
 		finalStreamKey = streamKey
 		tmpSize = exa.NonceSize + exa.EncryptedPayloadSize(totalsize)
+	} else if uploadState.mode == exaMultipartModeClient {
+		if totalsize < exa.NonceSize {
+			return res, "", s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		finalKeyVersion = uploadState.version
 	}
 
 	f, err := p.openTmpFile(filepath.Join(bucket, MetaTmpDir), bucket, object,
@@ -1849,7 +1863,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	defer f.cleanup()
 
 	var encWriter *exastream.EncryptWriter
-	if exaMultipart {
+	if uploadState.mode == exaMultipartModeServer {
 		_, err := f.File().Write(finalNonce)
 		if err != nil {
 			return res, "", fmt.Errorf("write exa nonce: %w", err)
@@ -1877,7 +1891,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 
 		partPlainSize := pfi.Size()
 		var rdr io.Reader = pf
-		if partInfos[i].meta != nil {
+		if uploadState.mode == exaMultipartModeServer && partInfos[i].meta != nil {
 			partPlainSize = partInfos[i].plainSize
 			metaInfo := partInfos[i].meta
 			bucketKey, ok := bucketKeyCache[metaInfo.version]
@@ -1983,7 +1997,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	if err != nil {
 		return res, "", err
 	}
-	if exaMultipart {
+	if uploadState.isEncrypted() {
 		err := p.storeExaObjectVersion(f.File(), bucket, object, finalKeyVersion)
 		if err != nil {
 			return res, "", err
@@ -2379,9 +2393,6 @@ func (p *Posix) AbortMultipartUpload(ctx context.Context, mpu *s3.AbortMultipart
 		return err
 	}
 	defer release()
-	if exaAccess := exaAccessFromContext(ctx); exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 	if mpu.Key == nil {
 		return s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
@@ -2412,6 +2423,13 @@ func (p *Posix) AbortMultipartUpload(ctx context.Context, mpu *s3.AbortMultipart
 	if err != nil {
 		return s3err.GetAPIError(s3err.ErrNoSuchUpload)
 	}
+	state, err := p.exaMultipartState(bucket, filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum), uploadID))
+	if err != nil {
+		return err
+	}
+	if err := validateExaMultipartAccess(exaAccessFromContext(ctx), state); err != nil {
+		return err
+	}
 
 	if mpu.IfMatchInitiatedTime != nil {
 		if mpu.IfMatchInitiatedTime.Unix() != f.ModTime().Unix() {
@@ -2435,9 +2453,6 @@ func (p *Posix) ListMultipartUploads(ctx context.Context, mpu *s3.ListMultipartU
 	}
 	defer release()
 	var lmu s3response.ListMultipartUploadsResult
-	if exaAccess := exaAccessFromContext(ctx); exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return lmu, s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 
 	bucket := *mpu.Bucket
 
@@ -2565,9 +2580,6 @@ func (p *Posix) ListParts(ctx context.Context, input *s3.ListPartsInput) (s3resp
 
 	var lpr s3response.ListPartsResult
 	exaAccess := exaAccessFromContext(ctx)
-	if exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return lpr, s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 
 	if input.Key == nil {
 		return lpr, s3err.GetAPIError(s3err.ErrNoSuchKey)
@@ -2613,6 +2625,13 @@ func (p *Posix) ListParts(ctx context.Context, input *s3.ListPartsInput) (s3resp
 	}
 
 	objdir := filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum))
+	uploadState, err := p.exaMultipartState(bucket, filepath.Join(objdir, uploadID))
+	if err != nil {
+		return lpr, err
+	}
+	if err := validateExaMultipartAccess(exaAccess, uploadState); err != nil {
+		return lpr, err
+	}
 	tmpdir := filepath.Join(bucket, objdir)
 
 	ents, err := os.ReadDir(filepath.Join(tmpdir, uploadID))
@@ -2669,7 +2688,7 @@ func (p *Posix) ListParts(ctx context.Context, input *s3.ListPartsInput) (s3resp
 			continue
 		}
 		size := fi.Size()
-		if exaAccess != nil && len(exaAccess.Secret) > 0 {
+		if uploadState.mode == exaMultipartModeServer {
 			_, exaOk, err := p.exaPartMetadata(bucket, partPath)
 			if err != nil {
 				return s3response.ListPartsResult{}, err
@@ -2764,15 +2783,41 @@ func (p *Posix) UploadPartWithPostFunc(ctx context.Context, input *s3.UploadPart
 	}
 	r := input.Body
 	exaAccess := exaAccessFromContext(ctx)
-	if exaAccess != nil && len(exaAccess.Secret) == 0 {
-		return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 	var exaNonce []byte
 	var exaKeyVersion uint64
 	var exaStreamKey []byte
 	exaEncrypted := false
 	tmpSize := length
-	if exaAccess != nil {
+
+	_, err := os.Stat(bucket)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchBucket)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat bucket: %w", err)
+	}
+
+	sum := sha256.Sum256([]byte(object))
+	objdir := filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum))
+	mpPath := filepath.Join(objdir, uploadID)
+
+	_, err = os.Stat(filepath.Join(bucket, mpPath))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchUpload)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat uploadid: %w", err)
+	}
+
+	uploadState, err := p.exaMultipartState(bucket, mpPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateExaMultipartAccess(exaAccess, uploadState); err != nil {
+		return nil, err
+	}
+
+	if uploadState.mode == exaMultipartModeServer {
 		version, wrapped, err := p.exaCurrentWrappedKey(bucket, exaAccess.Access)
 		if err != nil {
 			return nil, err
@@ -2798,26 +2843,6 @@ func (p *Posix) UploadPartWithPostFunc(ctx context.Context, input *s3.UploadPart
 		exaStreamKey = streamKey
 		exaEncrypted = true
 		tmpSize = exa.EncryptedPayloadSize(length)
-	}
-
-	_, err := os.Stat(bucket)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, s3err.GetAPIError(s3err.ErrNoSuchBucket)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("stat bucket: %w", err)
-	}
-
-	sum := sha256.Sum256([]byte(object))
-	objdir := filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum))
-	mpPath := filepath.Join(objdir, uploadID)
-
-	_, err = os.Stat(filepath.Join(bucket, mpPath))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, s3err.GetAPIError(s3err.ErrNoSuchUpload)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("stat uploadid: %w", err)
 	}
 
 	partPath := filepath.Join(mpPath, fmt.Sprintf("%v", *part))
@@ -3073,9 +3098,6 @@ func (p *Posix) UploadPartCopy(ctx context.Context, upi *s3.UploadPartCopyInput)
 		return s3response.CopyPartResult{}, err
 	}
 	defer release()
-	if exaAccessFromContext(ctx) != nil {
-		return s3response.CopyPartResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-	}
 	acct, ok := ctx.Value("account").(auth.Account)
 	if !ok {
 		acct = auth.Account{}
@@ -3109,6 +3131,13 @@ func (p *Posix) UploadPartCopy(ctx context.Context, upi *s3.UploadPartCopyInput)
 	}
 	if err != nil {
 		return s3response.CopyPartResult{}, fmt.Errorf("stat uploadid: %w", err)
+	}
+	uploadState, err := p.exaMultipartState(*upi.Bucket, filepath.Join(objdir, *upi.UploadId))
+	if err != nil {
+		return s3response.CopyPartResult{}, err
+	}
+	if uploadState.isEncrypted() || exaAccessFromContext(ctx) != nil {
+		return s3response.CopyPartResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 	}
 
 	partPath := filepath.Join(objdir, *upi.UploadId, fmt.Sprintf("%v", *upi.PartNumber))

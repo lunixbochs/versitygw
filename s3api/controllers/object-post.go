@@ -25,6 +25,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/debuglogger"
+	"github.com/versity/versitygw/internal/exa"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3event"
@@ -155,10 +156,32 @@ func (c S3ApiController) CreateMultipartUpload(ctx *fiber.Ctx) (*Response, error
 	tagging := ctx.Get("X-Amz-Tagging")
 	expires := ctx.Get("Expires")
 	metadata := utils.GetUserMetaData(&ctx.Request().Header)
+	exaAccess, _ := utils.ContextKeyExaAccess.Get(ctx).(*exa.ExaAccess)
 	// context locals
 	acct := utils.ContextKeyAccount.Get(ctx).(auth.Account)
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
 	parsedAcl := utils.ContextKeyParsedAcl.Get(ctx).(auth.ACL)
+
+	var exaKeyVersion *uint64
+	kvHeader := ctx.Get("x-exa-key-version")
+	if kvHeader != "" {
+		if exaAccess == nil {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		version, err := strconv.ParseUint(kvHeader, 10, 64)
+		if err != nil || version == 0 {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		exaKeyVersion = &version
+	}
 
 	err := auth.VerifyAccess(ctx.Context(), c.be,
 		auth.AccessOptions{
@@ -215,6 +238,7 @@ func (c S3ApiController) CreateMultipartUpload(ctx *fiber.Ctx) (*Response, error
 			Metadata:                  metadata,
 			ChecksumAlgorithm:         checksumAlgorithm,
 			ChecksumType:              checksumType,
+			ExaKeyVersion:             exaKeyVersion,
 		})
 	var headers map[string]*string
 	if err == nil {

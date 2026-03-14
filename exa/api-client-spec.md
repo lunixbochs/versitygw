@@ -263,7 +263,13 @@ Support matrix:
   - `ListMultipartUploads`: supported
 
 - Auth-only Exa key:
-  - All multipart operations above return `NotImplemented`
+  - `CreateMultipartUpload`: supported with required `x-exa-key-version`
+  - `UploadPart`: supported (upload raw slices of the final ciphertext object)
+  - `ListParts`: supported (sizes are ciphertext part sizes)
+  - `CompleteMultipartUpload`: supported (parts are concatenated as-is and the
+    final object stores `exa.kv`)
+  - `AbortMultipartUpload`: supported
+  - `ListMultipartUploads`: supported
 
 - `UploadPartCopy`:
   - If request uses Exa access key, returns `NotImplemented`
@@ -271,6 +277,9 @@ Support matrix:
 Part encryption details:
 - Multipart parts do not include nonce prefix in part payload.
 - Part metadata stores per-part nonce and key version.
+- Auth-only multipart parts are not encrypted by the server and do not store
+  per-part Exa metadata; the final object nonce remains in-band in the
+  concatenated ciphertext.
 
 ## 7. Admin API: Exa-Relevant Endpoints
 

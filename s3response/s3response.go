@@ -607,6 +607,8 @@ type CreateMultipartUploadInput struct {
 	RequestPayer              types.RequestPayer
 	ServerSideEncryption      types.ServerSideEncryption
 	StorageClass              types.StorageClass
+
+	ExaKeyVersion *uint64
 }
 
 type CopyObjectInput struct {

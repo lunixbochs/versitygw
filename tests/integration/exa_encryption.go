@@ -389,7 +389,7 @@ func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
 	}
 
 	return actionHandler(s, testName, func(_ *s3.Client, bucket string) error {
-		fullAccess, authOnlyAccess, _, _, err := setupExaKeys(s, bucket)
+		fullAccess, authOnlyAccess, bucketKey, version, err := setupExaKeys(s, bucket)
 		if err != nil {
 			return err
 		}
@@ -397,13 +397,6 @@ func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
 		authConf := *s
 		authConf.awsID = authOnlyAccess
 		authClient := authConf.GetClient()
-
-		ctx, cancel := context.WithTimeout(context.Background(), shortTimeout)
-		_, err = createMp(authClient, bucket, "exa-mp-auth-only")
-		cancel()
-		if err := checkApiErr(err, s3err.GetAPIError(s3err.ErrNotImplemented)); err != nil {
-			return err
-		}
 
 		exaConf := *s
 		exaConf.awsID = fullAccess
@@ -422,6 +415,10 @@ func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
 			return err
 		}
 
+		var (
+			ctx    context.Context
+			cancel context.CancelFunc
+		)
 		ctx, cancel = context.WithTimeout(context.Background(), shortTimeout)
 		listRes, err := exaClient.ListParts(ctx, &s3.ListPartsInput{
 			Bucket:   &bucket,
@@ -495,6 +492,122 @@ func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
 		}
 		if got := authHeaders.Get("Content-Length"); got != strconv.FormatInt(expectedTotal, 10) {
 			return fmt.Errorf("expected ciphertext content-length %d, got %q", expectedTotal, got)
+		}
+
+		authObj := "exa-mp-auth-only"
+		authMp, err := createMp(authClient, bucket, authObj, withExaKeyVersion(version))
+		if err != nil {
+			return err
+		}
+
+		authPlaintext := make([]byte, totalSize)
+		if _, err := rand.Read(authPlaintext); err != nil {
+			return err
+		}
+		authNonce := make([]byte, exa.NonceSize)
+		if _, err := rand.Read(authNonce); err != nil {
+			return err
+		}
+		authFileKey, err := exa.DeriveFileKey(bucketKey, authNonce)
+		if err != nil {
+			return err
+		}
+		authStreamKey, err := exa.DeriveStreamKey(authFileKey, authNonce)
+		if err != nil {
+			return err
+		}
+		authEncReader, err := exastream.NewEncryptReader(authStreamKey, bytes.NewReader(authPlaintext))
+		if err != nil {
+			return err
+		}
+		authPayload, err := io.ReadAll(authEncReader)
+		if err != nil {
+			return err
+		}
+		authCiphertext := append(append([]byte{}, authNonce...), authPayload...)
+
+		split := len(authCiphertext) / 2
+		authPartsData := [][]byte{
+			authCiphertext[:split],
+			authCiphertext[split:],
+		}
+		authCompleteParts := make([]types.CompletedPart, 0, len(authPartsData))
+		for i, data := range authPartsData {
+			pn := int32(i + 1)
+			ctx, cancel := context.WithTimeout(context.Background(), shortTimeout)
+			out, err := authClient.UploadPart(ctx, &s3.UploadPartInput{
+				Bucket:     &bucket,
+				Key:        &authObj,
+				UploadId:   authMp.UploadId,
+				PartNumber: &pn,
+				Body:       bytes.NewReader(data),
+			})
+			cancel()
+			if err != nil {
+				return err
+			}
+			authCompleteParts = append(authCompleteParts, types.CompletedPart{
+				ETag:       out.ETag,
+				PartNumber: &pn,
+			})
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), shortTimeout)
+		authListRes, err := authClient.ListParts(ctx, &s3.ListPartsInput{
+			Bucket:   &bucket,
+			Key:      &authObj,
+			UploadId: authMp.UploadId,
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+		if len(authListRes.Parts) != len(authPartsData) {
+			return fmt.Errorf("expected %d auth-only parts, got %d", len(authPartsData), len(authListRes.Parts))
+		}
+		for i, part := range authListRes.Parts {
+			if part.Size == nil {
+				return fmt.Errorf("missing auth-only part size for part %d", i+1)
+			}
+			if *part.Size != int64(len(authPartsData[i])) {
+				return fmt.Errorf("expected auth-only part size %d, got %d", len(authPartsData[i]), *part.Size)
+			}
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), shortTimeout)
+		_, err = authClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+			Bucket:   &bucket,
+			Key:      &authObj,
+			UploadId: authMp.UploadId,
+			MultipartUpload: &types.CompletedMultipartUpload{
+				Parts: authCompleteParts,
+			},
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+
+		authPlainBody, _, err := getSignedObject(s, bucket, authObj, fullAccess, nil)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(authPlainBody, authPlaintext) {
+			return fmt.Errorf("auth-only multipart plaintext mismatch")
+		}
+
+		authCipherBody, authCipherHeaders, err := getSignedObject(s, bucket, authObj, authOnlyAccess, nil)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(authCipherBody, authCiphertext) {
+			return fmt.Errorf("auth-only multipart ciphertext mismatch")
+		}
+		if got := authCipherHeaders.Get("x-exa-key-version"); got != strconv.FormatUint(version, 10) {
+			return fmt.Errorf("expected auth-only multipart key version %d, got %q", version, got)
+		}
+		if got := authCipherHeaders.Get("Content-Length"); got != strconv.Itoa(len(authCiphertext)) {
+			return fmt.Errorf("expected auth-only multipart content-length %d, got %q", len(authCiphertext), got)
 		}
 
 		return nil
