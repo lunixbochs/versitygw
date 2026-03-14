@@ -223,6 +223,8 @@ Object body contract:
 Validation:
 - key version must parse as uint > 0
 - headers require Exa access key format (`exa1...`)
+- `x-exa-key-version` is valid only with auth-only Exa keys; full Exa keys
+  (with `s`) must not send it
 
 ### 6.3 Download (`GET Object`, `HEAD Object`)
 
@@ -254,7 +256,7 @@ For encrypted objects, listing paths compute and expose plaintext size.
 Support matrix:
 
 - Full Exa access key:
-  - `CreateMultipartUpload`: supported
+  - `CreateMultipartUpload`: supported only without `x-exa-key-version`
   - `UploadPart`: supported (parts encrypted independently)
   - `ListParts`: supported
   - `CompleteMultipartUpload`: supported (parts decrypted then final object

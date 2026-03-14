@@ -63,7 +63,7 @@ func exaRandomNonce() ([]byte, error) {
 func exaMultipartStateForRequest(exaAccess *exa.ExaAccess, version *uint64) (exaMultipartState, error) {
 	switch {
 	case version != nil:
-		if exaAccess == nil || *version == 0 {
+		if exaAccess == nil || len(exaAccess.Secret) > 0 || *version == 0 {
 			return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 		}
 		return exaMultipartState{mode: exaMultipartModeClient, version: *version}, nil
@@ -138,7 +138,7 @@ func validateExaMultipartAccess(exaAccess *exa.ExaAccess, state exaMultipartStat
 			return s3err.GetAPIError(s3err.ErrInvalidRequest)
 		}
 	case exaMultipartModeClient:
-		if exaAccess == nil {
+		if exaAccess == nil || len(exaAccess.Secret) > 0 {
 			return s3err.GetAPIError(s3err.ErrInvalidRequest)
 		}
 	case exaMultipartModeServer:

@@ -113,13 +113,12 @@ Upload mode is selected per request:
     write, and stores `exa.kv`
 - Client-managed upload:
   - allowed with `auth-only`
-  - also allowed with `auth+secret` if the client wants to upload already
-    encrypted bytes
   - client MUST send `x-exa-key-version`
   - request body MUST already be `nonce(16) + encrypted payload`
   - server stores the object as-is and stores `exa.kv`
 
-Non-Exa access keys cannot use `x-exa-key-version`.
+`x-exa-key-version` is valid only with `auth-only` Exa keys. Requests using a
+non-Exa key or an `auth+secret` Exa key MUST NOT send it.
 
 ### Download behavior
 
@@ -154,7 +153,6 @@ Multipart mode is selected when `CreateMultipartUpload` is called:
   - server encrypts each part independently
 - Client-managed multipart:
   - required for `auth-only`
-  - also allowed with `auth+secret`
   - client MUST send `x-exa-key-version` on `CreateMultipartUpload`
   - `UploadPart` bodies are raw contiguous slices of the final ciphertext
     object

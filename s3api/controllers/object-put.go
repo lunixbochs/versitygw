@@ -34,6 +34,30 @@ import (
 	"github.com/versity/versitygw/s3response"
 )
 
+func parseExaUploadKeyVersion(exaAccess *exa.ExaAccess, kvHeader string) (*uint64, error) {
+	if exaAccess == nil {
+		if kvHeader != "" {
+			return nil, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		return nil, nil
+	}
+	if len(exaAccess.Secret) > 0 {
+		if kvHeader != "" {
+			return nil, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		return nil, nil
+	}
+	if kvHeader == "" {
+		return nil, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+
+	version, err := strconv.ParseUint(kvHeader, 10, 64)
+	if err != nil || version == 0 {
+		return nil, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+	return &version, nil
+}
+
 func (c S3ApiController) PutObjectTagging(ctx fiber.Ctx) (*Response, error) {
 	bucket := ctx.Params("bucket")
 	key := strings.TrimPrefix(ctx.Path(), fmt.Sprintf("/%s/", bucket))
@@ -712,28 +736,16 @@ func (c S3ApiController) PutObject(ctx fiber.Ctx) (*Response, error) {
 		actions = append(actions, auth.PutObjectRetentionAction)
 	}
 
-	var exaKeyVersion *uint64
-	kvHeader := ctx.Get("x-exa-key-version")
-	if kvHeader != "" {
-		if exaAccess == nil {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		version, err := strconv.ParseUint(kvHeader, 10, 64)
-		if err != nil || version == 0 {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		exaKeyVersion = &version
+	exaKeyVersion, err := parseExaUploadKeyVersion(exaAccess, ctx.Get("x-exa-key-version"))
+	if err != nil {
+		return &Response{
+			MetaOpts: &MetaOptions{
+				BucketOwner: parsedAcl.Owner,
+			},
+		}, err
 	}
 
-	err := auth.VerifyAccess(ctx.RequestCtx(), c.be,
+	err = auth.VerifyAccess(ctx.RequestCtx(), c.be,
 		auth.AccessOptions{
 			Readonly:        c.readonly,
 			Acl:             parsedAcl,

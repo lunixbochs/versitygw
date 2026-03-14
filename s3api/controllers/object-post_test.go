@@ -412,6 +412,45 @@ func TestS3ApiController_CreateMultipartUpload_ExaKeyVersion(t *testing.T) {
 	}
 }
 
+func TestS3ApiController_CreateMultipartUpload_ExaKeyVersionRejectsAuthSecret(t *testing.T) {
+	be := &BackendMock{
+		GetBucketPolicyFunc: func(contextMoqParam context.Context, bucket string) ([]byte, error) {
+			return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+		},
+	}
+
+	ctrl := S3ApiController{be: be}
+	locals := map[utils.ContextKey]any{
+		utils.ContextKeyIsRoot: true,
+		utils.ContextKeyParsedAcl: auth.ACL{
+			Owner: "root",
+		},
+		utils.ContextKeyAccount: auth.Account{
+			Access: "root",
+			Role:   auth.RoleAdmin,
+		},
+		utils.ContextKeyRegion:    "us-east-1",
+		utils.ContextKeyExaAccess: &exa.ExaAccess{Access: "root", Secret: []byte("secret")},
+	}
+
+	testController(
+		t,
+		ctrl.CreateMultipartUpload,
+		&Response{
+			MetaOpts: &MetaOptions{
+				BucketOwner: "root",
+			},
+		},
+		s3err.GetAPIError(s3err.ErrInvalidRequest),
+		ctxInputs{
+			locals: locals,
+			headers: map[string]string{
+				"x-exa-key-version": "7",
+			},
+		},
+	)
+}
+
 func TestS3ApiController_CompleteMultipartUpload(t *testing.T) {
 	emptyMpPartsBody, err := xml.Marshal(s3response.CompleteMultipartUploadRequestBody{
 		Parts: []types.CompletedPart{},
