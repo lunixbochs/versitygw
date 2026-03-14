@@ -1974,7 +1974,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 		encSize := fi.Size()
 		plainSize := encSize
 		var metaInfo *exaObjectMeta
-		exaMeta, exaOk, err := p.exaObjectMetadata(bucket, partObjPath)
+		exaMeta, exaOk, err := p.exaPartMetadata(bucket, partObjPath)
 		if err != nil {
 			return res, "", err
 		}
@@ -2344,7 +2344,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 		return res, "", err
 	}
 	if exaMultipart {
-		err := p.storeExaObjectMeta(f.File(), bucket, object, finalNonce, finalKeyVersion)
+		err := p.storeExaObjectVersion(f.File(), bucket, object, finalKeyVersion)
 		if err != nil {
 			return res, "", err
 		}
@@ -3110,7 +3110,7 @@ func (p *Posix) ListParts(ctx context.Context, input *s3.ListPartsInput) (s3resp
 		}
 		size := fi.Size()
 		if exaAccess != nil && len(exaAccess.Secret) > 0 {
-			_, exaOk, err := p.exaObjectMetadata(bucket, partPath)
+			_, exaOk, err := p.exaPartMetadata(bucket, partPath)
 			if err != nil {
 				return s3response.ListPartsResult{}, err
 			}
@@ -3502,7 +3502,7 @@ func (p *Posix) UploadPartWithPostFunc(ctx context.Context, input *s3.UploadPart
 	}
 
 	if exaEncrypted {
-		err := p.storeExaObjectMeta(f.File(), bucket, partPath, exaNonce, exaKeyVersion)
+		err := p.storeExaPartMeta(f.File(), bucket, partPath, exaNonce, exaKeyVersion)
 		if err != nil {
 			return nil, err
 		}
@@ -4017,14 +4017,10 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 	tmpSize := contentLength
 
 	if exaAccess != nil {
-		if po.ExaNonce != nil || po.ExaKeyVersion != nil {
-			if po.ExaNonce == nil || po.ExaKeyVersion == nil {
+		if po.ExaKeyVersion != nil {
+			if *po.ExaKeyVersion == 0 {
 				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 			}
-			if len(po.ExaNonce) != exa.NonceSize || *po.ExaKeyVersion == 0 {
-				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-			}
-			exaNonce = append([]byte(nil), po.ExaNonce...)
 			exaKeyVersion = *po.ExaKeyVersion
 			exaEncrypted = true
 		} else if len(exaAccess.Secret) > 0 {
@@ -4056,7 +4052,7 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 		} else {
 			return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 		}
-	} else if po.ExaNonce != nil || po.ExaKeyVersion != nil {
+	} else if po.ExaKeyVersion != nil {
 		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 	}
 
@@ -4126,8 +4122,17 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 
 	objsize := contentLength
 
+	bodyReader := po.Body
+	if po.ExaKeyVersion != nil {
+		noncePrefix := make([]byte, exa.NonceSize)
+		if _, err := io.ReadFull(po.Body, noncePrefix); err != nil {
+			return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		bodyReader = io.MultiReader(bytes.NewReader(noncePrefix), po.Body)
+	}
+
 	hash := md5.New()
-	rdr := io.TeeReader(po.Body, hash)
+	rdr := io.TeeReader(bodyReader, hash)
 
 	var hashRdr *utils.HashReader
 	if !isTrailingChecksum {
@@ -4248,7 +4253,7 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 	}
 
 	if exaEncrypted {
-		err := p.storeExaObjectMeta(f.File(), *po.Bucket, *po.Key, exaNonce, exaKeyVersion)
+		err := p.storeExaObjectVersion(f.File(), *po.Bucket, *po.Key, exaKeyVersion)
 		if err != nil {
 			return s3response.PutObjectOutput{}, err
 		}
@@ -5028,7 +5033,7 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 		objSize = 0
 	}
 	exaAccess := exaAccessFromContext(ctx)
-	exaMeta, exaOk, err := p.exaObjectMetadata(bucket, object)
+	exaVersion, exaOk, err := p.exaObjectVersion(bucket, object)
 	if err != nil {
 		return nil, err
 	}
@@ -5046,7 +5051,7 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 			}
 			objSize = plainSize
 		} else {
-			backend.SetExaResponseInfo(ctx, exaMeta.nonce, exaMeta.version)
+			backend.SetExaResponseInfo(ctx, exaVersion)
 		}
 	}
 
@@ -5129,7 +5134,11 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 	// using an os.File allows zero-copy sendfile via io.Copy(os.File, net.Conn)
 	var body io.ReadCloser = f
 	if decrypt {
-		wrapped, err := p.exaWrappedKey(bucket, exaAccess.Access, exaMeta.version)
+		nonce, err := exaReadNonce(f)
+		if err != nil {
+			return nil, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+		}
+		wrapped, err := p.exaWrappedKey(bucket, exaAccess.Access, exaVersion)
 		if err != nil {
 			return nil, err
 		}
@@ -5137,11 +5146,11 @@ func (p *Posix) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.Ge
 		if err != nil {
 			return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
 		}
-		fileKey, err := exa.DeriveFileKey(bucketKey, exaMeta.nonce)
+		fileKey, err := exa.DeriveFileKey(bucketKey, nonce)
 		if err != nil {
 			return nil, err
 		}
-		streamKey, err := exa.DeriveStreamKey(fileKey, exaMeta.nonce)
+		streamKey, err := exa.DeriveStreamKey(fileKey, nonce)
 		if err != nil {
 			return nil, err
 		}
@@ -5331,7 +5340,7 @@ func (p *Posix) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3.
 	encSize := fi.Size()
 	size := encSize
 	exaAccess := exaAccessFromContext(ctx)
-	exaMeta, exaOk, err := p.exaObjectMetadata(bucket, object)
+	exaVersion, exaOk, err := p.exaObjectVersion(bucket, object)
 	if err != nil {
 		return nil, err
 	}
@@ -5347,7 +5356,7 @@ func (p *Posix) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3.
 			}
 			size = plainSize
 		} else {
-			backend.SetExaResponseInfo(ctx, exaMeta.nonce, exaMeta.version)
+			backend.SetExaResponseInfo(ctx, exaVersion)
 		}
 	}
 	if fi.IsDir() {
@@ -5647,7 +5656,7 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 		return s3response.CopyObjectOutput{}, s3err.GetCopySourceObjectTooLargeErr(p.copyObjectThreshold)
 	}
 
-	srcExaMeta, srcExaOk, err := p.exaObjectMetadata(srcBucket, srcObject)
+	srcExaVersion, srcExaOk, err := p.exaObjectVersion(srcBucket, srcObject)
 	if err != nil {
 		return s3response.CopyObjectOutput{}, err
 	}
@@ -5851,8 +5860,7 @@ func (p *Posix) CopyObject(ctx context.Context, input s3response.CopyObjectInput
 			ObjectLockLegalHoldStatus: input.ObjectLockLegalHoldStatus,
 		}
 		if srcExaOk {
-			putObjectInput.ExaNonce = append([]byte(nil), srcExaMeta.nonce...)
-			version := srcExaMeta.version
+			version := srcExaVersion
 			putObjectInput.ExaKeyVersion = &version
 		}
 

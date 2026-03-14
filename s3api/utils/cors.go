@@ -17,12 +17,11 @@ package utils
 import "strings"
 
 const (
-	ExaNonceHeader      = "x-exa-nonce"
 	ExaKeyVersionHeader = "x-exa-key-version"
 )
 
 func DefaultExposeHeaders() []string {
-	return []string{"ETag", ExaNonceHeader, ExaKeyVersionHeader}
+	return []string{"ETag", ExaKeyVersionHeader}
 }
 
 func AppendUniqueHeaderValues(existing string, values ...string) string {

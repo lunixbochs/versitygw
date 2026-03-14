@@ -574,9 +574,6 @@ func (c S3ApiController) GetObject(ctx fiber.Ctx) (*Response, error) {
 		"x-amz-object-lock-retain-until-date": utils.FormatDatePtrToString(res.ObjectLockRetainUntilDate, time.RFC3339),
 		"Last-Modified":                       utils.FormatDatePtrToString(res.LastModified, timefmt),
 	}
-	if nonce, ok := ctx.Context().Value(backend.ExaContextNonceKey).(string); ok && nonce != "" {
-		headers["x-exa-nonce"] = &nonce
-	}
 	if version, ok := ctx.Context().Value(backend.ExaContextKeyVersionKey).(string); ok && version != "" {
 		headers["x-exa-key-version"] = &version
 	}
