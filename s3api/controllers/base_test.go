@@ -249,7 +249,19 @@ func TestEnsureExposeMetaHeaders_AddsActualMetaHeaderNames(t *testing.T) {
 	ensureExposeMetaHeaders(ctx)
 
 	got := string(ctx.Response().Header.Peek("Access-Control-Expose-Headers"))
-	assert.Equal(t, "ETag, X-Amz-Meta-Bar, X-Amz-Meta-Foo", got)
+	assert.Equal(t, utils.AppendUniqueHeaderValues("ETag", append(utils.DefaultExposeHeaders(), "X-Amz-Meta-Bar", "X-Amz-Meta-Foo")...), got)
+}
+
+func TestEnsureExposeMetaHeaders_AddsDefaultExposeHeaders(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+
+	ctx.Response().Header.Add("Access-Control-Allow-Origin", "https://example.com")
+
+	ensureExposeMetaHeaders(ctx)
+
+	got := string(ctx.Response().Header.Peek("Access-Control-Expose-Headers"))
+	assert.Equal(t, strings.Join(utils.DefaultExposeHeaders(), ", "), got)
 }
 
 // mock the audit logger

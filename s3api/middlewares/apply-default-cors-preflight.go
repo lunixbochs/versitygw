@@ -39,6 +39,7 @@ func ApplyDefaultCORSPreflight(fallbackOrigin string) fiber.Handler {
 		if len(ctx.Response().Header.Peek("Vary")) == 0 {
 			ctx.Response().Header.Add("Vary", VaryHdr)
 		}
+		ensureDefaultExposeHeaders(ctx)
 
 		if reqMethod := strings.TrimSpace(ctx.Get("Access-Control-Request-Method")); reqMethod != "" {
 			if len(ctx.Response().Header.Peek("Access-Control-Allow-Methods")) == 0 {

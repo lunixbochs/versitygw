@@ -17,10 +17,12 @@ package middlewares
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/versity/versitygw/backend"
+	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 )
 
@@ -74,6 +76,9 @@ func TestApplyBucketCORSPreflightFallback_NoBucketCors_Responds204(t *testing.T)
 	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "content-type" {
 		t.Fatalf("expected allow headers to mirror request, got %q", got)
 	}
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != strings.Join(utils.DefaultExposeHeaders(), ", ") {
+		t.Fatalf("expected default expose headers, got %q", got)
+	}
 }
 
 func TestApplyBucketCORSPreflightFallback_NoSuchBucket_Responds204(t *testing.T) {
@@ -112,6 +117,9 @@ func TestApplyBucketCORSPreflightFallback_NoSuchBucket_Responds204(t *testing.T)
 	}
 	if got := resp.Header.Get("Access-Control-Allow-Methods"); got != "PUT" {
 		t.Fatalf("expected allow methods to mirror request, got %q", got)
+	}
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != strings.Join(utils.DefaultExposeHeaders(), ", ") {
+		t.Fatalf("expected default expose headers, got %q", got)
 	}
 }
 

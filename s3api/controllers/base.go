@@ -347,34 +347,12 @@ func ensureExposeMetaHeaders(ctx *fiber.Ctx) {
 		return
 	}
 
-	lowerExisting := map[string]struct{}{}
-	if existing != "" {
-		for _, part := range strings.Split(existing, ",") {
-			p := strings.ToLower(strings.TrimSpace(part))
-			if p != "" {
-				lowerExisting[p] = struct{}{}
-			}
-		}
-	}
-
 	metaNames := map[string]struct{}{}
 	for k := range ctx.Response().Header.All() {
 		key := string(k)
 		if strings.HasPrefix(strings.ToLower(key), "x-amz-meta-") {
 			metaNames[key] = struct{}{}
 		}
-	}
-	if len(metaNames) == 0 {
-		// Still ensure ETag is present if any expose headers exist/are needed.
-		if _, ok := lowerExisting["etag"]; ok {
-			return
-		}
-		if existing == "" {
-			ctx.Response().Header.Set("Access-Control-Expose-Headers", "ETag")
-			return
-		}
-		ctx.Response().Header.Set("Access-Control-Expose-Headers", existing+", ETag")
-		return
 	}
 
 	metaList := make([]string, 0, len(metaNames))
@@ -383,28 +361,14 @@ func ensureExposeMetaHeaders(ctx *fiber.Ctx) {
 	}
 	sort.Strings(metaList)
 
-	toAdd := make([]string, 0, 1+len(metaList))
-	if _, ok := lowerExisting["etag"]; !ok {
-		toAdd = append(toAdd, "ETag")
-		lowerExisting["etag"] = struct{}{}
-	}
-	for _, h := range metaList {
-		lh := strings.ToLower(h)
-		if _, ok := lowerExisting[lh]; ok {
-			continue
-		}
-		toAdd = append(toAdd, h)
-		lowerExisting[lh] = struct{}{}
-	}
-	if len(toAdd) == 0 {
-		return
-	}
+	toExpose := utils.DefaultExposeHeaders()
+	toExpose = append(toExpose, metaList...)
 
-	if existing == "" {
-		ctx.Response().Header.Set("Access-Control-Expose-Headers", strings.Join(toAdd, ", "))
+	updated := utils.AppendUniqueHeaderValues(existing, toExpose...)
+	if updated == existing {
 		return
 	}
-	ctx.Response().Header.Set("Access-Control-Expose-Headers", existing+", "+strings.Join(toAdd, ", "))
+	ctx.Response().Header.Set("Access-Control-Expose-Headers", updated)
 }
 
 // Sets the response headers

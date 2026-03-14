@@ -16,9 +16,11 @@ package middlewares
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/versity/versitygw/s3api/utils"
 )
 
 func TestApplyDefaultCORS_AddsHeaderWhenOriginSet(t *testing.T) {
@@ -42,8 +44,8 @@ func TestApplyDefaultCORS_AddsHeaderWhenOriginSet(t *testing.T) {
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != origin {
 		t.Fatalf("expected fallback origin header, got %q", got)
 	}
-	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != "ETag" {
-		t.Fatalf("expected expose headers to include ETag, got %q", got)
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != strings.Join(utils.DefaultExposeHeaders(), ", ") {
+		t.Fatalf("expected default expose headers, got %q", got)
 	}
 }
 
