@@ -162,28 +162,16 @@ func (c S3ApiController) CreateMultipartUpload(ctx *fiber.Ctx) (*Response, error
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
 	parsedAcl := utils.ContextKeyParsedAcl.Get(ctx).(auth.ACL)
 
-	var exaKeyVersion *uint64
-	kvHeader := ctx.Get("x-exa-key-version")
-	if kvHeader != "" {
-		if exaAccess == nil {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		version, err := strconv.ParseUint(kvHeader, 10, 64)
-		if err != nil || version == 0 {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		exaKeyVersion = &version
+	exaKeyVersion, err := parseExaUploadKeyVersion(exaAccess, ctx.Get("x-exa-key-version"))
+	if err != nil {
+		return &Response{
+			MetaOpts: &MetaOptions{
+				BucketOwner: parsedAcl.Owner,
+			},
+		}, err
 	}
 
-	err := auth.VerifyAccess(ctx.Context(), c.be,
+	err = auth.VerifyAccess(ctx.Context(), c.be,
 		auth.AccessOptions{
 			Readonly:      c.readonly,
 			Acl:           parsedAcl,

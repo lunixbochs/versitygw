@@ -26,6 +26,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/versity/versitygw/auth"
+	"github.com/versity/versitygw/internal/exa"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3event"
@@ -1368,4 +1369,46 @@ func TestS3ApiController_PutObject(t *testing.T) {
 				})
 		})
 	}
+}
+
+func TestS3ApiController_PutObject_ExaKeyVersionRejectsAuthSecret(t *testing.T) {
+	be := &BackendMock{
+		GetBucketPolicyFunc: func(contextMoqParam context.Context, bucket string) ([]byte, error) {
+			return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+		},
+	}
+
+	ctrl := S3ApiController{be: be}
+	locals := map[utils.ContextKey]any{
+		utils.ContextKeyIsRoot: true,
+		utils.ContextKeyParsedAcl: auth.ACL{
+			Owner: "root",
+		},
+		utils.ContextKeyAccount: auth.Account{
+			Access: "root",
+			Role:   auth.RoleAdmin,
+		},
+		utils.ContextKeyRegion:     "us-east-1",
+		utils.ContextKeyBodyReader: strings.NewReader("ciphertext"),
+		utils.ContextKeyExaAccess:  &exa.ExaAccess{Access: "root", Secret: []byte("secret")},
+	}
+
+	testController(
+		t,
+		ctrl.PutObject,
+		&Response{
+			MetaOpts: &MetaOptions{
+				BucketOwner: "root",
+			},
+		},
+		s3err.GetAPIError(s3err.ErrInvalidRequest),
+		ctxInputs{
+			locals: locals,
+			body:   []byte("ciphertext"),
+			headers: map[string]string{
+				"Content-Length":    "10",
+				"x-exa-key-version": "7",
+			},
+		},
+	)
 }

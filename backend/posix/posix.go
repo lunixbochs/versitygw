@@ -3558,7 +3558,7 @@ func (p *Posix) PutObjectWithPostFunc(ctx context.Context, po s3response.PutObje
 
 	if exaAccess != nil {
 		if po.ExaKeyVersion != nil {
-			if *po.ExaKeyVersion == 0 {
+			if len(exaAccess.Secret) > 0 || *po.ExaKeyVersion == 0 {
 				return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 			}
 			exaKeyVersion = *po.ExaKeyVersion
