@@ -18,35 +18,18 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/versity/versitygw/s3api/utils"
 )
 
-func ensureExposeETag(ctx fiber.Ctx) {
-	existing := strings.TrimSpace(string(ctx.Response().Header.Peek("Access-Control-Expose-Headers")))
-	defaults := []string{"ETag", "x-amz-storage-class"}
-	if existing == "" {
-		ctx.Response().Header.Add("Access-Control-Expose-Headers", strings.Join(defaults, ", "))
+func ensureDefaultExposeHeaders(ctx fiber.Ctx) {
+	updated := utils.AppendUniqueHeaderValues(
+		string(ctx.Response().Header.Peek("Access-Control-Expose-Headers")),
+		utils.DefaultExposeHeaders()...,
+	)
+	if updated == "" {
 		return
 	}
-
-	lowerExisting := map[string]struct{}{}
-	for part := range strings.SplitSeq(existing, ",") {
-		p := strings.ToLower(strings.TrimSpace(part))
-		if p != "" {
-			lowerExisting[p] = struct{}{}
-		}
-	}
-
-	updated := existing
-	for _, h := range defaults {
-		if _, ok := lowerExisting[strings.ToLower(h)]; ok {
-			continue
-		}
-		updated += ", " + h
-	}
-
-	if updated != existing {
-		ctx.Response().Header.Set("Access-Control-Expose-Headers", updated)
-	}
+	ctx.Response().Header.Set("Access-Control-Expose-Headers", updated)
 }
 
 // ApplyDefaultCORS adds a default Access-Control-Allow-Origin header to responses
@@ -67,7 +50,7 @@ func ApplyDefaultCORS(fallbackOrigin string) fiber.Handler {
 		if len(ctx.Response().Header.Peek("Vary")) == 0 {
 			ctx.Response().Header.Add("Vary", VaryHdr)
 		}
-		ensureExposeETag(ctx)
+		ensureDefaultExposeHeaders(ctx)
 		return nil
 	}
 }

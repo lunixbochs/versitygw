@@ -17,10 +17,12 @@ package controllers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/versity/versitygw/s3api/middlewares"
+	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 )
 
@@ -55,8 +57,8 @@ func TestApplyBucketCORS_FallbackOrigin_NoBucketCors_NoRequestOrigin(t *testing.
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != origin {
 		t.Fatalf("expected Access-Control-Allow-Origin to be set to fallback, got %q", got)
 	}
-	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != "ETag, x-amz-storage-class" {
-		t.Fatalf("expected Access-Control-Expose-Headers to include ETag and x-amz-storage-class, got %q", got)
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != strings.Join(utils.DefaultExposeHeaders(), ", ") {
+		t.Fatalf("expected default expose headers, got %q", got)
 	}
 }
 

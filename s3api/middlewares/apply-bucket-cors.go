@@ -69,7 +69,7 @@ func ApplyBucketCORS(be backend.Backend, resolveBucket BucketResolver, fallbackO
 					if len(ctx.Response().Header.Peek("Vary")) == 0 {
 						ctx.Response().Header.Add("Vary", VaryHdr)
 					}
-					ensureExposeETag(ctx)
+					ensureDefaultExposeHeaders(ctx)
 				}
 				return nil
 			}
@@ -133,8 +133,8 @@ func ApplyBucketCORS(be backend.Backend, resolveBucket BucketResolver, fallbackO
 			}
 		}
 
-		// Always expose ETag and user metadata headers for browser clients.
-		ensureExposeETag(ctx)
+		// Always expose the default CORS header set for browser clients.
+		ensureDefaultExposeHeaders(ctx)
 
 		return nil
 	}

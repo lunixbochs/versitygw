@@ -16,9 +16,11 @@ package middlewares
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/versity/versitygw/s3api/utils"
 )
 
 func TestApplyDefaultCORSPreflight_OptionsSetsPreflightHeaders(t *testing.T) {
@@ -56,5 +58,8 @@ func TestApplyDefaultCORSPreflight_OptionsSetsPreflightHeaders(t *testing.T) {
 	}
 	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "content-type,authorization" {
 		t.Fatalf("expected allow headers to mirror request, got %q", got)
+	}
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != strings.Join(utils.DefaultExposeHeaders(), ", ") {
+		t.Fatalf("expected default expose headers, got %q", got)
 	}
 }
