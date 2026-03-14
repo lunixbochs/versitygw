@@ -34,6 +34,19 @@ type exaObjectMeta struct {
 	version uint64
 }
 
+type exaMultipartMode string
+
+const (
+	exaMultipartModeNone   exaMultipartMode = "none"
+	exaMultipartModeServer exaMultipartMode = "server"
+	exaMultipartModeClient exaMultipartMode = "client"
+)
+
+type exaMultipartState struct {
+	mode    exaMultipartMode
+	version uint64
+}
+
 func exaAccessFromContext(ctx context.Context) *exa.ExaAccess {
 	exaAccess, _ := backend.ExaAccessFromContext(ctx)
 	return exaAccess
@@ -45,6 +58,97 @@ func exaRandomNonce() ([]byte, error) {
 		return nil, fmt.Errorf("generate nonce: %w", err)
 	}
 	return nonce, nil
+}
+
+func exaMultipartStateForRequest(exaAccess *exa.ExaAccess, version *uint64) (exaMultipartState, error) {
+	switch {
+	case version != nil:
+		if exaAccess == nil || *version == 0 {
+			return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		return exaMultipartState{mode: exaMultipartModeClient, version: *version}, nil
+	case exaAccess == nil:
+		return exaMultipartState{mode: exaMultipartModeNone}, nil
+	case len(exaAccess.Secret) > 0:
+		return exaMultipartState{mode: exaMultipartModeServer}, nil
+	default:
+		return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+}
+
+func (state exaMultipartState) isEncrypted() bool {
+	return state.mode == exaMultipartModeServer || state.mode == exaMultipartModeClient
+}
+
+func (p *Posix) exaMultipartState(bucket, object string) (exaMultipartState, error) {
+	modeBytes, err := p.meta.RetrieveAttribute(nil, bucket, object, backend.ExaMultipartModeKey)
+	if errors.Is(err, meta.ErrNoSuchKey) {
+		return exaMultipartState{mode: exaMultipartModeNone}, nil
+	}
+	if err != nil {
+		return exaMultipartState{}, fmt.Errorf("get exa multipart mode: %w", err)
+	}
+
+	state := exaMultipartState{mode: exaMultipartMode(modeBytes)}
+	switch state.mode {
+	case exaMultipartModeNone, exaMultipartModeServer:
+		return state, nil
+	case exaMultipartModeClient:
+		versionBytes, err := p.meta.RetrieveAttribute(nil, bucket, object, backend.ExaMultipartKVKey)
+		if err != nil {
+			if errors.Is(err, meta.ErrNoSuchKey) {
+				return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+			}
+			return exaMultipartState{}, fmt.Errorf("get exa multipart key version: %w", err)
+		}
+		version, err := strconv.ParseUint(string(versionBytes), 10, 64)
+		if err != nil || version == 0 {
+			return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+		}
+		state.version = version
+		return state, nil
+	default:
+		return exaMultipartState{}, s3err.GetAPIError(s3err.ErrInvalidObjectState)
+	}
+}
+
+func (p *Posix) storeExaMultipartState(f *os.File, bucket, object string, state exaMultipartState) error {
+	if state.mode == "" {
+		state.mode = exaMultipartModeNone
+	}
+	if err := p.meta.StoreAttribute(f, bucket, object, backend.ExaMultipartModeKey, []byte(state.mode)); err != nil {
+		return fmt.Errorf("set exa multipart mode: %w", err)
+	}
+	if state.mode != exaMultipartModeClient {
+		return nil
+	}
+	if state.version == 0 {
+		return s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+	if err := p.meta.StoreAttribute(f, bucket, object, backend.ExaMultipartKVKey, []byte(strconv.FormatUint(state.version, 10))); err != nil {
+		return fmt.Errorf("set exa multipart key version: %w", err)
+	}
+	return nil
+}
+
+func validateExaMultipartAccess(exaAccess *exa.ExaAccess, state exaMultipartState) error {
+	switch state.mode {
+	case exaMultipartModeNone:
+		if exaAccess != nil && len(exaAccess.Secret) == 0 {
+			return s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+	case exaMultipartModeClient:
+		if exaAccess == nil {
+			return s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+	case exaMultipartModeServer:
+		if exaAccess == nil || len(exaAccess.Secret) == 0 {
+			return s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+	default:
+		return s3err.GetAPIError(s3err.ErrInvalidObjectState)
+	}
+	return nil
 }
 
 func (p *Posix) exaPartMetadata(bucket, object string) (*exaObjectMeta, bool, error) {

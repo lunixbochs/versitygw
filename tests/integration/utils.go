@@ -42,6 +42,7 @@ import (
 	"os/exec"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -993,6 +994,7 @@ type mpCfg struct {
 	checksumAlgorithm types.ChecksumAlgorithm
 	checksumType      types.ChecksumType
 	metadata          map[string]string
+	exaKeyVersion     *uint64
 }
 
 type mpOpt func(*mpCfg)
@@ -1005,6 +1007,9 @@ func withChecksumType(t types.ChecksumType) mpOpt {
 }
 func withMetadata(m map[string]string) mpOpt {
 	return func(mc *mpCfg) { mc.metadata = m }
+}
+func withExaKeyVersion(version uint64) mpOpt {
+	return func(mc *mpCfg) { mc.exaKeyVersion = &version }
 }
 
 func createMp(s3client *s3.Client, bucket, key string, opts ...mpOpt) (*s3.CreateMultipartUploadOutput, error) {
@@ -1019,6 +1024,25 @@ func createMp(s3client *s3.Client, bucket, key string, opts ...mpOpt) (*s3.Creat
 		ChecksumAlgorithm: cfg.checksumAlgorithm,
 		ChecksumType:      cfg.checksumType,
 		Metadata:          cfg.metadata,
+	}, func(o *s3.Options) {
+		if cfg.exaKeyVersion == nil {
+			return
+		}
+		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			return stack.Finalize.Insert(
+				middleware.FinalizeMiddlewareFunc("SetExaKeyVersion",
+					func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (
+						out middleware.FinalizeOutput, md middleware.Metadata, err error,
+					) {
+						if req, ok := in.Request.(*smithyhttp.Request); ok {
+							req.Header.Set("x-exa-key-version", strconv.FormatUint(*cfg.exaKeyVersion, 10))
+						}
+						return next.HandleFinalize(ctx, in)
+					}),
+				"Signing",
+				middleware.Before,
+			)
+		})
 	})
 	cancel()
 	return out, err

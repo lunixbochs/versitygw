@@ -18,6 +18,12 @@ Notes:
 - The server authenticates using the base access key `a` and the IAM secret.
 - Encryption-aware clients can omit `s` to request auth-only behavior.
 
+Terminology used below:
+- `auth-only`: Exa access key omits `s`. The request is authenticated, but the
+  server cannot unwrap bucket keys for that caller.
+- `auth+secret`: Exa access key includes `s`. The request is authenticated and
+  the server can unwrap bucket keys for that caller.
+
 ## Wrapped bucket key format
 
 Wrapped bucket keys are CBOR-encoded blobs stored in bucket metadata and
@@ -98,31 +104,41 @@ Payload size:
 
 ### Upload behavior
 
-If AccessKeyID includes `s` (secret present):
-- The server unwraps the bucket key, generates a random nonce, encrypts
-  the stream on write, and stores `exa.kv` metadata.
+Upload mode is selected per request:
+- Server-managed upload:
+  - allowed only with `auth+secret`
+  - request body is plaintext
+  - client omits `x-exa-key-version`
+  - server unwraps the bucket key, generates a random nonce, encrypts on
+    write, and stores `exa.kv`
+- Client-managed upload:
+  - allowed with `auth-only`
+  - also allowed with `auth+secret` if the client wants to upload already
+    encrypted bytes
+  - client MUST send `x-exa-key-version`
+  - request body MUST already be `nonce(16) + encrypted payload`
+  - server stores the object as-is and stores `exa.kv`
 
-If AccessKeyID omits `s` (auth-only):
-- The client encrypts locally and MUST send:
-  - `x-exa-key-version`: decimal bucket key version
-- The object body MUST start with the 16-byte nonce prefix, followed by the
-  encrypted payload.
+Non-Exa access keys cannot use `x-exa-key-version`.
 
 ### Download behavior
 
-If AccessKeyID includes `s`:
-- The server decrypts on the fly and uses plaintext sizes for range requests,
-  `Content-Length`, and listing sizes.
-
-If AccessKeyID omits `s`:
-- The server returns ciphertext with raw sizes (nonce + encrypted payload).
-- Responses include `x-exa-key-version` header.
+- `auth+secret`:
+  - encrypted objects are decrypted on the fly
+  - range semantics, `Content-Length`, and object reads are plaintext-based
+- `auth-only`:
+  - encrypted objects are returned as stored ciphertext
+  - sizes are raw ciphertext sizes (`nonce + encrypted payload`)
+  - responses include `x-exa-key-version`
 
 Directory listings always report plaintext sizes for encrypted objects.
 
 ### Headers
 
 - `x-exa-key-version`: decimal string
+  - request header on client-managed `PUT Object`
+  - request header on client-managed `CreateMultipartUpload`
+  - response header on ciphertext `GET`/`HEAD` responses
 
 ## CopyObject and multipart
 
@@ -130,18 +146,32 @@ CopyObject:
 - Cross-bucket copy is rejected if the source object is encrypted.
 - Same-bucket copy preserves ciphertext and exa metadata (no re-encryption).
 
-Multipart:
-- Multipart encryption is supported only with full exa access keys (with `s`).
-- Auth-only exa keys return `NotImplemented` for multipart operations.
-- Each part is encrypted independently with a per-part nonce stored only in
-  metadata (no nonce prefix in the part payload).
+Multipart mode is selected when `CreateMultipartUpload` is called:
+- Server-managed multipart:
+  - allowed only with `auth+secret`
+  - client omits `x-exa-key-version`
+  - `UploadPart` receives plaintext parts
+  - server encrypts each part independently
+- Client-managed multipart:
+  - required for `auth-only`
+  - also allowed with `auth+secret`
+  - client MUST send `x-exa-key-version` on `CreateMultipartUpload`
+  - `UploadPart` bodies are raw contiguous slices of the final ciphertext
+    object
+  - `ListParts` reports ciphertext part sizes
+  - `CompleteMultipartUpload` concatenates the part bytes as-is and stores
+    `exa.kv` on the final object
+
+Server-managed multipart still encrypts each part independently with a
+per-part nonce stored only in metadata (no nonce prefix in the part payload).
 - Part key derivation:
   - File key: HKDF-SHA256(bucketKey, salt=nonce, info="exa-data-part") -> 16 bytes
   - Stream key: HKDF-SHA256(fileKey, salt=nonce, info="payload-part") -> 32 bytes
-- CompleteMultipartUpload decrypts each part and re-encrypts the final object
-  with a new nonce and the current bucket key (same behavior as PutObject).
+- Server-side encrypted `CompleteMultipartUpload` decrypts each part and
+  re-encrypts the final object with a new nonce and the current bucket key
+  (same behavior as PutObject).
 - UploadPartCopy is not supported for exa-encrypted uploads.
-- Mixed plaintext and encrypted parts are rejected.
+- Mixed server-managed and client-managed multipart parts are rejected.
 
 ## Metadata layout (posix backend)
 
@@ -152,9 +182,16 @@ Bucket metadata attributes:
 Object metadata attributes:
 - `exa.kv`: key-version used to derive the file key.
 
-Multipart part metadata attributes:
+Server-managed multipart part metadata attributes:
 - `exa.nonce`: 16-byte part nonce (parts never include a nonce prefix).
 - `exa.kv`: key-version used to derive the part key.
+
+Client-managed multipart parts do not store Exa part metadata; the Exa nonce
+remains only in-band in the final concatenated object.
+
+Multipart upload state metadata attributes:
+- `exa.mpu.mode`: one of `none`, `server`, or `client`
+- `exa.mpu.kv`: final object key-version for client-managed multipart uploads
 
 ## IAM public keys
 

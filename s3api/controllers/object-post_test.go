@@ -24,6 +24,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/versity/versitygw/auth"
+	"github.com/versity/versitygw/internal/exa"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3event"
@@ -354,6 +356,59 @@ func TestS3ApiController_CreateMultipartUpload(t *testing.T) {
 					headers: tt.input.headers,
 				})
 		})
+	}
+}
+
+func TestS3ApiController_CreateMultipartUpload_ExaKeyVersion(t *testing.T) {
+	var gotVersion *uint64
+	be := &BackendMock{
+		CreateMultipartUploadFunc: func(_ context.Context, input s3response.CreateMultipartUploadInput) (s3response.InitiateMultipartUploadResult, error) {
+			gotVersion = input.ExaKeyVersion
+			return s3response.InitiateMultipartUploadResult{}, nil
+		},
+		GetBucketPolicyFunc: func(contextMoqParam context.Context, bucket string) ([]byte, error) {
+			return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+		},
+	}
+
+	ctrl := S3ApiController{be: be}
+	locals := map[utils.ContextKey]any{
+		utils.ContextKeyIsRoot: true,
+		utils.ContextKeyParsedAcl: auth.ACL{
+			Owner: "root",
+		},
+		utils.ContextKeyAccount: auth.Account{
+			Access: "root",
+			Role:   auth.RoleAdmin,
+		},
+		utils.ContextKeyRegion:    "us-east-1",
+		utils.ContextKeyExaAccess: &exa.ExaAccess{Access: "root"},
+	}
+
+	testController(
+		t,
+		ctrl.CreateMultipartUpload,
+		&Response{
+			Data: s3response.InitiateMultipartUploadResult{},
+			Headers: map[string]*string{
+				"x-amz-checksum-algorithm": nil,
+				"x-amz-checksum-type":      nil,
+			},
+			MetaOpts: &MetaOptions{
+				BucketOwner: "root",
+			},
+		},
+		nil,
+		ctxInputs{
+			locals: locals,
+			headers: map[string]string{
+				"x-exa-key-version": "7",
+			},
+		},
+	)
+
+	if assert.NotNil(t, gotVersion) {
+		assert.EqualValues(t, 7, *gotVersion)
 	}
 }
 

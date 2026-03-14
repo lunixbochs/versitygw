@@ -25,6 +25,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/debuglogger"
+	"github.com/versity/versitygw/internal/exa"
 	"github.com/versity/versitygw/s3api/utils"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3event"
@@ -158,7 +159,7 @@ func (c S3ApiController) CreateMultipartUpload(ctx fiber.Ctx) (*Response, error)
 	legalHoldHdr := ctx.Get("X-Amz-Object-Lock-Legal-Hold")
 	lockModeHdr := ctx.Get("X-Amz-Object-Lock-Mode")
 	objLockDate := ctx.Get("X-Amz-Object-Lock-Retain-Until-Date")
-
+	exaAccess, _ := utils.ContextKeyExaAccess.Get(ctx).(*exa.ExaAccess)
 	// context locals
 	acct := utils.ContextKeyAccount.Get(ctx).(auth.Account)
 	isRoot := utils.ContextKeyIsRoot.Get(ctx).(bool)
@@ -173,6 +174,27 @@ func (c S3ApiController) CreateMultipartUpload(ctx fiber.Ctx) (*Response, error)
 	}
 	if lockModeHdr != "" || objLockDate != "" {
 		actions = append(actions, auth.PutObjectRetentionAction)
+	}
+
+	var exaKeyVersion *uint64
+	kvHeader := ctx.Get("x-exa-key-version")
+	if kvHeader != "" {
+		if exaAccess == nil {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		version, err := strconv.ParseUint(kvHeader, 10, 64)
+		if err != nil || version == 0 {
+			return &Response{
+				MetaOpts: &MetaOptions{
+					BucketOwner: parsedAcl.Owner,
+				},
+			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+		}
+		exaKeyVersion = &version
 	}
 
 	err := auth.VerifyAccess(ctx.RequestCtx(), c.be,
@@ -249,6 +271,7 @@ func (c S3ApiController) CreateMultipartUpload(ctx fiber.Ctx) (*Response, error)
 			Metadata:                  metadata,
 			ChecksumAlgorithm:         checksumAlgorithm,
 			ChecksumType:              checksumType,
+			ExaKeyVersion:             exaKeyVersion,
 		})
 	var headers map[string]*string
 	if err == nil {
