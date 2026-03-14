@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -84,10 +83,6 @@ func ExaEncryption_roundtrip(s *S3Conf) error {
 			return err
 		}
 
-		nonceHeader := authHeaders.Get("x-exa-nonce")
-		if nonceHeader == "" {
-			return fmt.Errorf("missing x-exa-nonce header")
-		}
 		versionHeader := authHeaders.Get("x-exa-key-version")
 		if versionHeader == "" {
 			return fmt.Errorf("missing x-exa-key-version header")
@@ -95,19 +90,10 @@ func ExaEncryption_roundtrip(s *S3Conf) error {
 		if versionHeader != strconv.FormatUint(version, 10) {
 			return fmt.Errorf("expected key version %d, got %q", version, versionHeader)
 		}
-		nonce, err := base64.RawURLEncoding.DecodeString(nonceHeader)
-		if err != nil {
-			return fmt.Errorf("decode x-exa-nonce: %w", err)
-		}
-		if len(nonce) != exa.NonceSize {
-			return fmt.Errorf("unexpected nonce length %d", len(nonce))
-		}
 		if len(authBody) < exa.NonceSize {
 			return fmt.Errorf("ciphertext shorter than nonce prefix")
 		}
-		if !bytes.Equal(authBody[:exa.NonceSize], nonce) {
-			return fmt.Errorf("nonce header does not match payload prefix")
-		}
+		nonce := authBody[:exa.NonceSize]
 
 		expectedPayloadSize := exa.EncryptedPayloadSize(int64(len(plaintext)))
 		expectedTotal := int64(exa.NonceSize) + expectedPayloadSize
@@ -163,7 +149,6 @@ func ExaEncryption_roundtrip(s *S3Conf) error {
 		}
 		cipherBody := append(append([]byte(nil), nonce2...), cipherPayload...)
 		headers := map[string]string{
-			"x-exa-nonce":       base64.RawURLEncoding.EncodeToString(nonce2),
 			"x-exa-key-version": strconv.FormatUint(version, 10),
 		}
 		if err := putSignedObject(s, bucket, obj2, authOnlyAccess, cipherBody, headers); err != nil {
@@ -499,22 +484,8 @@ func ExaEncryption_multipart_roundtrip(s *S3Conf) error {
 		if err != nil {
 			return err
 		}
-		nonceHeader := authHeaders.Get("x-exa-nonce")
-		if nonceHeader == "" {
-			return fmt.Errorf("missing x-exa-nonce header")
-		}
-		nonce, err := base64.RawURLEncoding.DecodeString(nonceHeader)
-		if err != nil {
-			return fmt.Errorf("decode x-exa-nonce: %w", err)
-		}
-		if len(nonce) != exa.NonceSize {
-			return fmt.Errorf("unexpected nonce length %d", len(nonce))
-		}
 		if len(authBody) < exa.NonceSize {
 			return fmt.Errorf("ciphertext shorter than nonce prefix")
-		}
-		if !bytes.Equal(authBody[:exa.NonceSize], nonce) {
-			return fmt.Errorf("nonce header does not match payload prefix")
 		}
 
 		expectedPayloadSize := exa.EncryptedPayloadSize(totalSize)

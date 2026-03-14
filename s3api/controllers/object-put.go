@@ -16,7 +16,6 @@ package controllers
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -682,27 +681,10 @@ func (c S3ApiController) PutObject(ctx *fiber.Ctx) (*Response, error) {
 	// load the meta headers
 	metadata := utils.GetUserMetaData(&ctx.Request().Header)
 
-	var exaNonce []byte
 	var exaKeyVersion *uint64
-	nonceHeader := ctx.Get("x-exa-nonce")
 	kvHeader := ctx.Get("x-exa-key-version")
-	if nonceHeader != "" || kvHeader != "" {
+	if kvHeader != "" {
 		if exaAccess == nil {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		if nonceHeader == "" || kvHeader == "" {
-			return &Response{
-				MetaOpts: &MetaOptions{
-					BucketOwner: parsedAcl.Owner,
-				},
-			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
-		}
-		nonce, err := base64.RawURLEncoding.DecodeString(nonceHeader)
-		if err != nil || len(nonce) != exa.NonceSize {
 			return &Response{
 				MetaOpts: &MetaOptions{
 					BucketOwner: parsedAcl.Owner,
@@ -717,7 +699,6 @@ func (c S3ApiController) PutObject(ctx *fiber.Ctx) (*Response, error) {
 				},
 			}, s3err.GetAPIError(s3err.ErrInvalidRequest)
 		}
-		exaNonce = nonce
 		exaKeyVersion = &version
 	}
 
@@ -814,7 +795,6 @@ func (c S3ApiController) PutObject(ctx *fiber.Ctx) (*Response, error) {
 			ChecksumCRC64NVME:         utils.GetStringPtr(checksums[types.ChecksumAlgorithmCrc64nvme]),
 			IfMatch:                   ifMatch,
 			IfNoneMatch:               ifNoneMatch,
-			ExaNonce:                  exaNonce,
 			ExaKeyVersion:             exaKeyVersion,
 		})
 	return &Response{

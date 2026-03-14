@@ -68,7 +68,6 @@ All JSON `[]byte` fields use standard base64 encoding (Go JSON behavior).
 
 ### 4.2 Exa object headers
 
-- `x-exa-nonce`: base64url without padding of a 16-byte nonce
 - `x-exa-key-version`: decimal unsigned integer string
 
 ## 5. S3 Bucket Exa APIs
@@ -209,7 +208,6 @@ Derivation:
 - Server encrypts plaintext stream before writing object.
 - Stored object bytes: `nonce(16)` + encrypted payload.
 - Server stores object metadata:
-  - `exa.nonce`
   - `exa.kv` (key version used)
 
 ### Mode B: Auth-only Exa access key (no `s`)
@@ -217,21 +215,14 @@ Derivation:
 Client sends already-encrypted object.
 
 Required headers:
-- `x-exa-nonce`
 - `x-exa-key-version`
 
 Object body contract:
 - body must be `nonce(16)` + encrypted payload
 
 Validation:
-- both headers required if either is present
-- nonce must decode as 16 bytes
 - key version must parse as uint > 0
 - headers require Exa access key format (`exa1...`)
-
-Implementation note:
-- The server validates header format but does not currently verify that body
-  nonce prefix equals `x-exa-nonce`. Clients should treat equality as required.
 
 ### 6.3 Download (`GET Object`, `HEAD Object`)
 
@@ -246,7 +237,6 @@ If object has Exa metadata:
   - server returns raw stored bytes (ciphertext with nonce prefix)
   - `Content-Length` is ciphertext length
   - response includes:
-    - `x-exa-nonce`
     - `x-exa-key-version`
 
 ### 6.4 Listing size semantics

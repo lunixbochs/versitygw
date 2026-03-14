@@ -16,7 +16,6 @@ package backend
 
 import (
 	"context"
-	"encoding/base64"
 	"strconv"
 	"strings"
 
@@ -31,7 +30,6 @@ const (
 	ExaObjectKVKey      = "exa.kv"
 
 	ExaContextAccessKey     = "exa-access"
-	ExaContextNonceKey      = "exa-nonce"
 	ExaContextKeyVersionKey = "exa-key-version"
 )
 
@@ -69,11 +67,10 @@ func ExaAccessFromContext(ctx context.Context) (*exa.ExaAccess, bool) {
 	return exaAccess, ok
 }
 
-func SetExaResponseInfo(ctx context.Context, nonce []byte, version uint64) {
+func SetExaResponseInfo(ctx context.Context, version uint64) {
 	setter, ok := ctx.(interface{ SetUserValue(key any, value any) })
 	if !ok {
 		return
 	}
-	setter.SetUserValue(ExaContextNonceKey, base64.RawURLEncoding.EncodeToString(nonce))
 	setter.SetUserValue(ExaContextKeyVersionKey, strconv.FormatUint(version, 10))
 }

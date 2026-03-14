@@ -571,7 +571,6 @@ type PutObjectInput struct {
 	Metadata map[string]string
 	Body     io.Reader
 
-	ExaNonce      []byte
 	ExaKeyVersion *uint64
 }
 

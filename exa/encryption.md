@@ -100,11 +100,10 @@ Payload size:
 
 If AccessKeyID includes `s` (secret present):
 - The server unwraps the bucket key, generates a random nonce, encrypts
-  the stream on write, and stores `exa.nonce`/`exa.kv` metadata.
+  the stream on write, and stores `exa.kv` metadata.
 
 If AccessKeyID omits `s` (auth-only):
 - The client encrypts locally and MUST send:
-  - `x-exa-nonce`: base64url (no padding) of the 16-byte nonce
   - `x-exa-key-version`: decimal bucket key version
 - The object body MUST start with the 16-byte nonce prefix, followed by the
   encrypted payload.
@@ -117,13 +116,12 @@ If AccessKeyID includes `s`:
 
 If AccessKeyID omits `s`:
 - The server returns ciphertext with raw sizes (nonce + encrypted payload).
-- Responses include `x-exa-nonce` and `x-exa-key-version` headers.
+- Responses include `x-exa-key-version` header.
 
 Directory listings always report plaintext sizes for encrypted objects.
 
 ### Headers
 
-- `x-exa-nonce`: base64url (no padding)
 - `x-exa-key-version`: decimal string
 
 ## CopyObject and multipart
@@ -152,7 +150,6 @@ Bucket metadata attributes:
 - `exa.kv.<version>.wrap.<access>`: wrapped bucket key bytes.
 
 Object metadata attributes:
-- `exa.nonce`: 16-byte file nonce.
 - `exa.kv`: key-version used to derive the file key.
 
 Multipart part metadata attributes:

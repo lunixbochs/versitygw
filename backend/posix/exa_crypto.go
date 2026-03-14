@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 
@@ -46,7 +47,7 @@ func exaRandomNonce() ([]byte, error) {
 	return nonce, nil
 }
 
-func (p *Posix) exaObjectMetadata(bucket, object string) (*exaObjectMeta, bool, error) {
+func (p *Posix) exaPartMetadata(bucket, object string) (*exaObjectMeta, bool, error) {
 	nonce, err := p.meta.RetrieveAttribute(nil, bucket, object, backend.ExaObjectNonceKey)
 	if errors.Is(err, meta.ErrNoSuchKey) {
 		return nil, false, nil
@@ -73,8 +74,24 @@ func (p *Posix) exaObjectMetadata(bucket, object string) (*exaObjectMeta, bool, 
 	return &exaObjectMeta{nonce: nonce, version: version}, true, nil
 }
 
+func (p *Posix) exaObjectVersion(bucket, object string) (uint64, bool, error) {
+	versionBytes, err := p.meta.RetrieveAttribute(nil, bucket, object, backend.ExaObjectKVKey)
+	if errors.Is(err, meta.ErrNoSuchKey) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("get exa key version: %w", err)
+	}
+	version, err := strconv.ParseUint(string(versionBytes), 10, 64)
+	if err != nil || version == 0 {
+		return 0, false, nil
+	}
+
+	return version, true, nil
+}
+
 func (p *Posix) exaPlaintextSize(bucket, object string, encSize int64) int64 {
-	_, ok, err := p.exaObjectMetadata(bucket, object)
+	_, ok, err := p.exaObjectVersion(bucket, object)
 	if err != nil || !ok {
 		return encSize
 	}
@@ -87,6 +104,18 @@ func (p *Posix) exaPlaintextSize(bucket, object string, encSize int64) int64 {
 		return encSize
 	}
 	return plainSize
+}
+
+func exaReadNonce(src io.ReaderAt) ([]byte, error) {
+	nonce := make([]byte, exa.NonceSize)
+	n, err := src.ReadAt(nonce, 0)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if n != exa.NonceSize {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return nonce, nil
 }
 
 func (p *Posix) exaWrappedKey(bucket, access string, version uint64) ([]byte, error) {
@@ -119,12 +148,22 @@ func (p *Posix) exaCurrentWrappedKey(bucket, access string) (uint64, []byte, err
 	return version, wrapped, nil
 }
 
-func (p *Posix) storeExaObjectMeta(f *os.File, bucket, object string, nonce []byte, version uint64) error {
+func (p *Posix) storeExaPartMeta(f *os.File, bucket, object string, nonce []byte, version uint64) error {
 	if len(nonce) != exa.NonceSize || version == 0 {
 		return s3err.GetAPIError(s3err.ErrInvalidRequest)
 	}
 	if err := p.meta.StoreAttribute(f, bucket, object, backend.ExaObjectNonceKey, nonce); err != nil {
 		return fmt.Errorf("set exa nonce: %w", err)
+	}
+	if err := p.meta.StoreAttribute(f, bucket, object, backend.ExaObjectKVKey, []byte(strconv.FormatUint(version, 10))); err != nil {
+		return fmt.Errorf("set exa key version: %w", err)
+	}
+	return nil
+}
+
+func (p *Posix) storeExaObjectVersion(f *os.File, bucket, object string, version uint64) error {
+	if version == 0 {
+		return s3err.GetAPIError(s3err.ErrInvalidRequest)
 	}
 	if err := p.meta.StoreAttribute(f, bucket, object, backend.ExaObjectKVKey, []byte(strconv.FormatUint(version, 10))); err != nil {
 		return fmt.Errorf("set exa key version: %w", err)
