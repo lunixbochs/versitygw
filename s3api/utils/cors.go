@@ -21,7 +21,7 @@ const (
 )
 
 func DefaultExposeHeaders() []string {
-	return []string{"ETag", ExaKeyVersionHeader}
+	return []string{"ETag", "x-amz-storage-class", ExaKeyVersionHeader}
 }
 
 func AppendUniqueHeaderValues(existing string, values ...string) string {
