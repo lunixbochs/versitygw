@@ -1911,7 +1911,7 @@ func (p *Posix) CompleteMultipartUploadWithCopy(ctx context.Context, input *s3.C
 	}
 
 	objdir := filepath.Join(MetaTmpMultipartDir, fmt.Sprintf("%x", sum))
-	uploadState, err := p.exaMultipartState(bucket, filepath.Join(objdir, uploadID))
+	uploadState, err := p.exaMultipartState(bucket, filepath.Join(objdir, activeUploadName))
 	if err != nil {
 		return res, "", err
 	}
